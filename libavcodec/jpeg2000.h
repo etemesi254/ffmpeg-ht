@@ -122,6 +122,10 @@ enum Jpeg2000Quantsty { // quantization style
 #define JPEG2000_PGOD_PCRL      0x03  // Position-component-resolution level-layer progression
 #define JPEG2000_PGOD_CPRL      0x04  // Component-position-resolution level-layer progression
 
+
+// misc constants
+#define JPEG2000_RSIZ_BIT  (1<<14)
+
 typedef struct Jpeg2000T1Context {
     int data[6144];
     uint16_t flags[6156];

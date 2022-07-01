@@ -136,6 +136,15 @@ typedef struct Jpeg2000DecoderContext {
 
     /*options parameters*/
     int             reduction_factor;
+
+    /*Extended capabilities */
+    uint8_t  is_htj2k; // set to 1 to indicate image uses HTJ2K bitstream, 0 otherwise
+
+    uint32_t pcap;
+    uint16_t ccap[32];
+
+    uint16_t *pcpf; //Pcpf_i , found in CPF marker , see section A.6 of HTJ2K spec
+
 } Jpeg2000DecoderContext;
 
 /* get_bits functions for JPEG2000 packet bitstream
@@ -520,7 +529,7 @@ static int get_cox(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
     }
 
     c->cblk_style = bytestream2_get_byteu(&s->g);
-    if (c->cblk_style != 0) { // cblk style
+    if (c->cblk_style != 0 && !(c->cblk_style & JPEG2000_CTSY_HTJ2K_F) /*Covers both partial and full htj2k stream */) { // cblk style
         av_log(s->avctx, AV_LOG_WARNING, "extra cblk styles %X\n", c->cblk_style);
         if (c->cblk_style & JPEG2000_CBLK_BYPASS)
             av_log(s->avctx, AV_LOG_WARNING, "Selective arithmetic coding bypass\n");
@@ -626,7 +635,62 @@ static int get_coc(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c,
     c->init = 1;
     return 0;
 }
+/* Parse extended capabilities marker */
+static int get_cap(Jpeg2000DecoderContext *s, int len) {
+  int pcap_ones; // contains number of set bits in pcap that are equal to 1.
+  int lcap;
 
+  if (len < 8 || len > 70){
+    // spec requires cap length to be between 8-70
+    av_log(s->avctx,AV_LOG_ERROR,"Invalid CAP length '%d'. Length should be between 8-70\n",len);
+    return AVERROR_INVALIDDATA;
+  }
+
+  s->pcap = bytestream2_get_be32u(&(s->g));
+
+  lcap = (len-6)/2;
+  pcap_ones = av_popcount_c(s->pcap);
+
+  if (lcap != pcap_ones){
+    // according to the spec ,length is the same as number of set bits in pcap header.
+    av_log(s->avctx,AV_LOG_ERROR,
+           "Length of marker`%d` not equal to set bits in Pcap segment(bits set to 1 in Pcap are %d).\n",lcap,pcap_ones);
+    return AVERROR_INVALIDDATA;
+  }
+  /*  According to the spec again Ccapⁱ exists if and only if the ith bit of Pcap is set.
+     *  Since pcap can have 32 bits, we loop until we read all Ccaps'  of set bits
+     *
+     *  Also since the spec addresses Pcap¹ as the most significant bit of 1(31st bit),the
+     *  array also takes that into account, storing at ccap[1] if (Pcap & 1<<31) == 1
+   */
+  for (int i=0;i<32;i++)
+    if (s->pcap & (1<<(32-i)))
+      s->ccap[i] = bytestream2_get_be16u(&(s->g));
+
+  return 0;
+}
+static int get_cpf(Jpeg2000DecoderContext *s, int len) {
+
+  int n;
+
+  if ((len < 4) || (len > 65534)) {
+    av_log(s->avctx,AV_LOG_ERROR,"CPF marker length %d not in range 4-65534",len);
+    return AVERROR_INVALIDDATA;
+  }
+
+  n = (len-2)/2;
+
+  s->pcpf = av_calloc(n,sizeof (uint16_t));
+
+  if (!s->pcpf) {
+    av_log(s->avctx,AV_LOG_FATAL,"Out of memory. Cannot reserve space of size %d for Pcpf",n);
+    return AVERROR_BUG;
+  }
+  for (int i=0;i<n;i++)
+    s->pcpf[i] = bytestream2_get_be16u(&(s->g));
+
+  return 0;
+}
 static int get_rgn(Jpeg2000DecoderContext *s, int n)
 {
     uint16_t compno;
@@ -2155,6 +2219,27 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
             Jpeg2000Tile *tile;
             Jpeg2000TilePart *tp;
 
+            if (codsty->cblk_style & JPEG2000_CTSY_HTJ2K_F ){
+              /* Confirm Marker constrains according to Annex A of Rec. ITU-T T.814 | ISO/IEC 15444-15 */
+              // A.2
+              if (!(s->avctx->profile & JPEG2000_RSIZ_BIT)){
+                av_log(s->avctx, AV_LOG_ERROR, "Bit 14 of Rsiz is not equal to 1\n");
+                return AVERROR_INVALIDDATA;
+              }
+              // A.5
+              for (int i=0;i<4;i++){
+                if (s->roi_shift[i]>37){
+                  av_log(s->avctx, AV_LOG_ERROR, "ROI coefficient %d is greater than 37.\n",s->roi_shift[i]);
+                  return AVERROR_INVALIDDATA;
+                }
+              }
+              // A.3.1
+              if(!(s->pcap & (1 << (17)))){ // 15th MSB of Pcap
+                av_log(s->avctx, AV_LOG_ERROR, "Bit 15 of Pcap is not equal to 1\n");
+                return AVERROR_INVALIDDATA;
+              }
+            }
+
             if (!s->tile) {
                 av_log(s->avctx, AV_LOG_ERROR, "Missing SIZ\n");
                 return AVERROR_INVALIDDATA;
@@ -2210,6 +2295,31 @@ static int jpeg2000_read_main_headers(Jpeg2000DecoderContext *s)
             if (!s->tile)
                 s->numXtiles = s->numYtiles = 0;
             break;
+        case JPEG2000_CAP:
+          if (!(s->ncomponents)) {
+            av_log(s->avctx, AV_LOG_ERROR,
+                   "Cannot decode a CAP marker without previously decoding a SIZ marker\n");
+            return AVERROR_INVALIDDATA;
+          }
+          /*
+             * According to the spec decoding a CAP marker is mandatory only if the 14th bit of Rsiz is set to 1.
+             * To indicate the decoder needs to implement extended capabilities to decode the image.
+             * If the bit is not set, we skip over parsing the CAP segment.
+           */
+          if (s->avctx->profile & JPEG2000_RSIZ_BIT) {
+            if (s->in_tile_headers){
+              av_log(s->avctx,AV_LOG_ERROR,"CAP marker can only be in main header");
+              return AVERROR_INVALIDDATA;
+            }
+            ret = get_cap(s,len);
+          } else{
+            av_log(s->avctx,AV_LOG_INFO,"Skipping parsing of the CAP segment");
+            bytestream2_skip(&(s->g),len-2);
+          }
+          break;
+        case JPEG2000_CPF:
+          ret = get_cpf(s,len);
+          break;
         case JPEG2000_COC:
             ret = get_coc(s, codsty, properties);
             break;
