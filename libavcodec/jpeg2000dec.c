@@ -1212,8 +1212,9 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000Tile *tile,
                 return incl;
 
             if (!cblk->npasses) {
-                int v = expn[bandno] + numgbits - 1 -
-                        tag_tree_decode(s, prec->zerobits + cblkno, 100);
+              int zbp =  tag_tree_decode(s, prec->zerobits + cblkno, 100);
+              cblk->zbp = zbp;
+                int v = expn[bandno] + numgbits - 1 - zbp;
                 if (v < 0 || v > 30) {
                     av_log(s->avctx, AV_LOG_ERROR,
                            "nonzerobits %d invalid or unsupported\n", v);
