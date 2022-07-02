@@ -22,6 +22,22 @@
 
 #include <stdint.h>
 
+
+typedef struct StateVars {
+  int32_t pos;
+  uint32_t bits;
+  uint32_t tmp;
+  uint32_t last;
+  uint8_t bits_left;
+  uint64_t bit_buf;
+} StateVars;
+
+typedef struct MelDecoderState {
+  uint8_t k;
+  uint8_t run;
+  uint8_t one;
+} MelDecoderState;
+
 /**
  * @brief  CtxVLC tables, borrowed from openhtj2k (https://github.com/osamu620/OpenHTJ2K) (credits to Osamu Watanabe)
  */
