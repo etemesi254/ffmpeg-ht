@@ -21,7 +21,7 @@
 
 
 #include <stdint.h>
-
+#include "jpeg2000.h"
 
 typedef struct StateVars {
   int32_t pos;
@@ -37,6 +37,10 @@ typedef struct MelDecoderState {
   uint8_t run;
   uint8_t one;
 } MelDecoderState;
+
+
+
+int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift);
 
 /**
  * @brief  CtxVLC tables, borrowed from openhtj2k (https://github.com/osamu620/OpenHTJ2K) (credits to Osamu Watanabe)
