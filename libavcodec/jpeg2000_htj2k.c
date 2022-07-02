@@ -459,7 +459,251 @@ static int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *m
 
 static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk,Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height)
 {
+  uint16_t q = 0; // Represents current quad position.
+  uint16_t q1, q2;
+  uint16_t context1, context2;
+  uint16_t context = 0;
+
+  uint8_t sig_pat[2] = {0};   // significance pattern
+  uint8_t res_off[2] = {0};   // residual offset
+  uint8_t emb_pat_k[2] = {0}; // Exponent Max Bound pattern K
+  uint8_t emb_pat_1[2] = {0}; // Exponent Max Bound pattern 1.
+  uint8_t gamma[2] = {0};
+
+  uint8_t E_n[2] = {0};
+  uint8_t E_ne[2] = {0};
+  uint8_t E_nw[2] = {0};
+  uint8_t E_nf[2] = {0};
+
+  uint8_t max_e[2] = {0};
+
+  uint8_t u_pfx[2] = {0};
+  uint8_t u_sfx[2] = {0};
+  uint8_t u_ext[2] = {0};
+
+  int32_t u[2] = {0};
+  int32_t U[2] = {0}; // Exponent bound (7.3.7)
+  int32_t m_n[2] = {0};
+  int32_t known_1[2] = {0};
+
+  int32_t m[2][4] = {0};
+  int32_t v[2][4] = {0};
+
+  uint8_t kappa[2] = {1, 1};
+
+  int sp;
+
+  uint32_t shift;
+  uint32_t recp_freq;
+  uint32_t recp_shift;
+
+  const uint8_t *vlc_buf = Dcup + Pcup;
+
+  const uint16_t quad_width = ff_jpeg2000_ceildivpow2(width, 1);
+  const uint16_t quad_height = ff_jpeg2000_ceildivpow2(height, 1);
+
+  size_t buf_size = 4 * quad_width * quad_height;
+
+  uint8_t *sigma_n = av_calloc(buf_size, sizeof(uint8_t));
+  uint8_t *E = av_calloc(buf_size, sizeof(uint8_t));
+  uint32_t *mu_n = av_calloc(buf_size, sizeof(uint32_t));
+
+  if (!sigma_n) {
+    av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for sigma_n buffer", buf_size);
+    goto error;
+  }
+  if (!E) {
+    av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for E buffer,", buf_size);
+    goto error;
+  }
+
+  if (!mu_n) {
+    av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for mu_n buffer,", buf_size);
+    goto error;
+  }
+  while (q < quad_width - 1) {
+    q1 = q;
+    q2 = q1 + 1;
+
+    if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, dec_CxtVLC_table0, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_Q1, context, Lcup, Pcup) == -1)
+      goto error;
+
+    if (res_off[J2K_Q1] == 0) {
+      if (emb_pat_k[J2K_Q1] != 0) {
+        av_log(s->avctx, AV_LOG_ERROR, "Exponent Maximum bound K is %d but should be 0", emb_pat_k[J2K_Q1]);
+        goto error;
+      }
+      if (emb_pat_1[J2K_Q1] != 0) {
+        av_log(s->avctx, AV_LOG_ERROR, "Exponent Maximum bound 1 is %d but should be 0", emb_pat_1[J2K_Q1]);
+        goto error;
+      }
+    }
+
+    for (int i = 0; i < 4; i++)
+      sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
+
+    // calculate context
+    context = sigma_n[4 * q1];           // f
+    context |= sigma_n[4 * q1 + 1];      // sf
+    context += sigma_n[4 * q1 + 2] << 1; // w << 1
+    context += sigma_n[4 * q1 + 3] << 2;
+
+    if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, dec_CxtVLC_table0, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_Q2, context, Lcup, Pcup) == -1)
+      goto error;
+
+    if (res_off[J2K_Q2] == 0) {
+      if (emb_pat_k[J2K_Q2] != 0) {
+        av_log(s->avctx, AV_LOG_ERROR, "Exponent Maximum bound K is %d but should be 0", emb_pat_k[J2K_Q2]);
+        goto error;
+      }
+      if (emb_pat_1[J2K_Q2] != 0) {
+        av_log(s->avctx, AV_LOG_ERROR, "Exponent Maximum bound 1 is %d but should be 0", emb_pat_1[J2K_Q1]);
+        goto error;
+      }
+    }
+
+    for (int i = 0; i < 4; i++)
+      sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
+
+    // calculate context for the next quad
+    context = sigma_n[4 * q2];           // f
+    context |= sigma_n[4 * q2 + 1];      // sf
+    context += sigma_n[4 * q2 + 2] << 1; // w << 1
+    context += sigma_n[4 * q2 + 3] << 2; // sw << 2
+
+    //  if res_off = [0,0]
+    u[0] = 0;
+    u[1] = 0;
+    // max bits needed before refilling
+    // 6 -> 3 bits per each vlc_decode_u_prefix() ( 2 instances)
+    // 10 -> 5 bits per each vlc_decode_u_suffix() ( 2 instances)
+    // 8  -> 4 bits per each vlc_decode_u_extension ( 2 instances ) (might be 3 confirm)
+
+    // TODO :(cae) might optimize this to remove refill checks inside vlc_decode_u_prefix/suffix if need be.
+
+    jpeg2000_bitbuf_refill_backwards(vlc_stream, vlc_buf);
+
+    if (res_off[J2K_Q1] == 1 && res_off[J2K_Q2] == 1) {
+
+      if (jpeg2000_decode_mel_sym(mel_state, mel_stream, Dcup, Lcup) == 1) {
+
+        u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+        u_pfx[J2K_Q2] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+
+        u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
+        u_sfx[J2K_Q2] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q2], vlc_buf);
+
+        u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
+        u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
+
+        u[J2K_Q1] = 2 + u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+        u[J2K_Q2] = 2 + u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] << 2);
+
+      } else {
+        u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+
+        if (u_pfx[J2K_Q1] > 2) {
+          u[J2K_Q2] = jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 1, vlc_buf) + 1;
+
+          u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
+
+          u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
+        } else {
+          u_pfx[J2K_Q2] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+
+          u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
+          u_sfx[J2K_Q2] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q2], vlc_buf);
+
+          u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
+          u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
+
+          u[J2K_Q2] = u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] << 2);
+        }
+        u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+      }
+
+    } else if (res_off[J2K_Q1] == 1 || res_off[J2K_Q2] == 1) {
+      uint8_t pos;
+
+      if (res_off[J2K_Q1] == 1)
+        pos = 0;
+      else
+        pos = 1;
+
+      u_pfx[pos] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+
+      u_sfx[pos] = vlc_decode_u_suffix(vlc_stream, u_pfx[pos], vlc_buf);
+
+      u_ext[pos] = vlc_decode_u_extension(vlc_stream, u_sfx[pos], vlc_buf);
+
+      u[pos] = u_pfx[pos] + u_sfx[pos] + (u_ext[pos] << 2);
+    }
+    U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
+    U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
+
+    for (int i = 0; i < 4; i++) {
+      m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
+      m[J2K_Q2][i] = sigma_n[4 * q2 + i] * U[J2K_Q2] - ((emb_pat_k[J2K_Q2] >> i) & 1);
+    }
+    // Recover magsgn value
+    recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m, E, mu_n, Dcup, Pcup, pLSB);
+
+    recover_mag_sgn(mag_sgn_stream, J2K_Q2, q2, m_n, known_1, emb_pat_1, v, m, E, mu_n, Dcup, Pcup, pLSB);
+
+    // prepare context for the next quad
+
+    // move to the next quad pair
+    q += 2;
+  }
+  if (quad_width % 2 == 1) { // If the quad width is an odd number
+    // TODO: (cae), confirm everything is working here
+    // this codebase wasn't triggered  in the test case
+    q1 = q;
+
+    if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream, dec_CxtVLC_table0, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, J2K_Q1, context, Lcup, Pcup) == -1)
+      goto error;
+
+    if (res_off[J2K_Q1] == 0) {
+      if (emb_pat_k[J2K_Q1] != 0) {
+        av_log(s->avctx, AV_LOG_ERROR, "Exponent Maximum bound K is %d but should be 0", emb_pat_k[J2K_Q1]);
+        goto error;
+      }
+      if (emb_pat_1[J2K_Q1] != 0) {
+        av_log(s->avctx, AV_LOG_ERROR, "Exponent Maximum bound 1 is %d but should be 0", emb_pat_1[J2K_Q1]);
+        goto error;
+      }
+    }
+
+    for (int i = 0; i < 4; i++)
+      sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
+
+    u[J2K_Q1] = 0;
+
+    if (res_off[J2K_Q1] == 1) {
+      u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
+      u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
+      u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
+      u[J2K_Q1] = u[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+    }
+
+    U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
+
+
+    for (int i = 0; i < 4; i++)
+      m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
+
+    recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m, E, mu_n, Dcup, Pcup, pLSB);
+
+    q++; // move to next quad pair
+
+  }
+  // initial line pair end.
   return 1;
+error:
+  av_freep(&sigma_n);
+  av_freep(&E);
+  av_freep(&mu_n);
+  return 0;
 
 }
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
