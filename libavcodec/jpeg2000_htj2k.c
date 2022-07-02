@@ -351,6 +351,31 @@ static av_always_inline uint8_t vlc_decode_u_extension(StateVars *vlc_stream, ui
   return bits;
 }
 
+static int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream, int32_t m_n, int32_t i_n, const uint8_t *buf, uint32_t length)
+{
+  int32_t val = 0;
+  if (m_n > 0) {
+    val = jpeg2000_bitbuf_get_bits_lsb_forward(mag_sgn_stream, m_n, buf, length);
+    val += (i_n << m_n);
+  }
+  return val;
+}
+
+static av_always_inline void recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2], int32_t known_1[2], const uint8_t emb_pat_1[2], int32_t v[2][4], const int32_t m[2][4], uint8_t *E, uint32_t *mu_n, const uint8_t *Dcup, uint32_t Pcup, uint32_t pLSB)
+{
+  for (int i = 0; i < 4; i++) {
+    int32_t n = 4 * q + i;
+    m_n[pos] = m[pos][i];
+    known_1[pos] = (emb_pat_1[pos] >> i) & 1;
+    v[pos][i] = jpeg2000_decode_mag_sgn(mag_sgn, m_n[pos], known_1[pos], Dcup, Pcup);
+    if (m_n[pos] != 0) {
+      E[n] = 32 - ff_clz(v[pos][i]);
+      mu_n[n] = (v[pos][i] >> 1) + 1;
+      mu_n[n] <<= pLSB;
+      mu_n[n] |= ((uint32_t)(v[pos][i] & 1)) << 31; // sign bit.
+    }
+  }
+}
 
 static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk,Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height)
 {
