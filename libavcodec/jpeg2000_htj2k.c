@@ -269,6 +269,88 @@ static av_always_inline uint64_t jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream
   return stream->bit_buf & mask;
 }
 
+/* VLC decoding utilities */
+
+static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s, StateVars *vlc_stream, const uint16_t *table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint32_t Pcup, uint16_t context)
+{
+  uint32_t value;
+  uint8_t len;
+  int index;
+  int code_word;
+
+  jpeg2000_bitbuf_refill_backwards(vlc_stream, Dcup + Pcup);
+
+  code_word = vlc_stream->bit_buf & 0x7f;
+  index = code_word + (context << 7);
+
+  // decode table has 1024 entries so ensure array access is in bounds
+  av_assert0(index < 1024);
+
+  value = table[index];
+  len = (value & 0x000F) >> 1;
+
+  res_off[pos] = (uint8_t)(value & 1);
+  sig_pat[pos] = (uint8_t)((value & 0x00F0) >> 4);
+  emb_pat_k[pos] = (uint8_t)((value & 0x0F00) >> 8);
+  emb_pat_1[pos] = (uint8_t)((value & 0xF000) >> 12);
+  jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, len);
+  return 0;
+}
+
+
+static av_always_inline uint8_t vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
+{
+  uint8_t bits;
+  if (vlc_stream->bits_left < 3)
+    jpeg2000_bitbuf_refill_backwards(vlc_stream, refill_array);
+
+  bits = jpeg2000_bitbuf_peek_bits_lsb(vlc_stream, 3);
+
+  if (bits & 0b1) {
+    jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 1);
+    return 1;
+  }
+  if (bits & 0b10) {
+    jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 2);
+    return 2;
+  }
+  jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 3);
+
+  if (bits & 0b100)
+    return 3;
+  else
+    return 5;
+}
+
+static av_always_inline uint8_t vlc_decode_u_suffix(StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array)
+{
+  uint8_t bits;
+  if (suffix < 3)
+    return 0;
+
+  if (vlc_stream->bits_left < 5)
+    jpeg2000_bitbuf_refill_backwards(vlc_stream, refill_array);
+
+  bits = jpeg2000_bitbuf_peek_bits_lsb(vlc_stream, 5);
+
+  if (suffix == 3) {
+    jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 1);
+    return bits & 1;
+  }
+  jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 5);
+
+  return bits;
+}
+
+static av_always_inline uint8_t vlc_decode_u_extension(StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array)
+{
+  uint8_t bits;
+  if (suffix < 28)
+    return 0;
+  bits = jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 4, refill_array);
+  return bits;
+}
+
 
 static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk,Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height)
 {
