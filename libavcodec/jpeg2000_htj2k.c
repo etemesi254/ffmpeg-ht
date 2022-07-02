@@ -32,6 +32,10 @@
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #define MAX(a, b) (((a) > (b)) ? (a) : (b))
 
+#define J2K_Q1 0
+
+#define J2K_Q2 1
+
 /**
  * @brief Table 2 in clause 7.3.3
  * */
@@ -435,10 +439,26 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_st
   }
 }
 
+/* Signal EMB decode */
+static int jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t context, uint32_t Lcup, uint32_t Pcup)
+{
+  if (context == 0) {
+    uint8_t sym;
+    sym = jpeg2000_decode_mel_sym(mel_state, mel_stream, Dcup, Lcup);
+    if (sym == 0) {
+      sig_pat[pos] = 0;
+      res_off[pos] = 0;
+      emb_pat_k[pos] = 0;
+      emb_pat_1[pos] = 0;
+      return 0;
+    }
+  }
+  return jpeg2000_decode_ctx_vlc(s, vlc_stream, vlc_table, Dcup, sig_pat, res_off, emb_pat_k, emb_pat_1, pos, Pcup, context);
+}
+
 
 static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk,Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height)
 {
-
   return 1;
 
 }
