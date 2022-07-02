@@ -270,6 +270,12 @@ static av_always_inline uint64_t jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream
 }
 
 
+static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk,Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height)
+{
+
+  return 1;
+
+}
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
   uint8_t p0 = 0;    // Number of placeholder passes.
@@ -362,6 +368,9 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
   jpeg2000_init_mel_decoder(&mel_state);
 
-  return 1;
+  ret = jpeg2000_decode_ht_cleanup(s, cblk,t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height);
+
+  return ret;
+
 
 }
