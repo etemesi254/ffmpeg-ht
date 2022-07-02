@@ -28,6 +28,15 @@
 
 #include "bytestream.h"
 
+
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+
+/**
+ * @brief Table 2 in clause 7.3.3
+ * */
+const static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
+
 static uint32_t has_zero(uint32_t dword)
 {
   // Borrowed from the famous stanford bithacks page
@@ -376,6 +385,56 @@ static av_always_inline void recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, ui
     }
   }
 }
+/*MEL stream decoding procedure*/
+
+static int jpeg2000_import_mel_bit(StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup)
+{
+  // TODO (cae): Figure out how to use the other refill method here.
+  if (mel_stream->bits == 0) {
+    mel_stream->bits = (mel_stream->tmp == 0xFF) ? 7 : 8;
+    if (mel_stream->pos < Lcup) {
+      mel_stream->tmp = Dcup[mel_stream->pos];
+      mel_stream->pos += 1;
+    } else
+      mel_stream->tmp = 0xFF;
+  }
+  mel_stream->bits -= 1;
+
+  return (mel_stream->tmp >> mel_stream->bits) & 1;
+}
+
+static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state, StateVars *mel_stream, const uint8_t *Dcup, uint32_t Lcup)
+{
+
+  if (mel_state->run == 0 && mel_state->one == 0) {
+    uint8_t eval;
+    uint8_t bit;
+
+    eval = MEL_E[mel_state->k];
+    bit = jpeg2000_import_mel_bit(mel_stream, Dcup, Lcup);
+    if (bit == 1) {
+      mel_state->run = 1 << eval;
+      mel_state->k = MIN(12, mel_state->k + 1);
+    } else {
+      mel_state->run = 0;
+      while (eval > 0) {
+        bit = jpeg2000_import_mel_bit(mel_stream, Dcup, Lcup);
+        mel_state->run = (2 * (mel_state->run)) + bit;
+        eval -= 1;
+      }
+      mel_state->k = MAX(0, mel_state->k - 1);
+      mel_state->one = 1;
+    }
+  }
+  if (mel_state->run > 0) {
+    mel_state->run -= 1;
+    return 0;
+  } else {
+    mel_state->one = 0;
+    return 1;
+  }
+}
+
 
 static int jpeg2000_decode_ht_cleanup(Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk,Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height)
 {
