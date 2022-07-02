@@ -39,6 +39,49 @@ static uint32_t has_byte(uint32_t dword, uint8_t byte)
   return has_zero(dword ^ (~0UL / 255 * (byte)));
 }
 
+/*Initializers*/
+
+static void jpeg2000_init_zero(StateVars *s)
+{
+  s->bits_left = 0;
+  s->bit_buf = 0;
+  s->tmp = 0;
+  s->bits = 0;
+  s->pos = 0;
+  s->last = 0;
+}
+/*Initialize MEL bit stream*/
+static void jpeg2000_init_mel(StateVars *s, uint32_t Pcup)
+{
+  jpeg2000_init_zero(s);
+  s->pos = Pcup;
+}
+
+static void jpeg2000_init_vlc(StateVars *s, uint32_t Lcup, uint32_t Pcup, const uint8_t *Dcup)
+{
+  s->bits_left = 0;
+  s->bit_buf = 0;
+  s->pos = Lcup - 2 - Pcup;
+  s->last = Dcup[Lcup - 2];
+  s->tmp = (s->last) >> 4;
+  s->bits = ((s->tmp & 7) < 7) ? 4 : 3;
+}
+
+static void jpeg2000_init_mag_ref(StateVars *s, uint32_t Lref)
+{
+  s->pos = Lref - 1;
+  s->bits = 0;
+  s->last = 0xFF;
+  s->tmp = 0;
+}
+
+static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
+{
+  mel_state->k = 0;
+  mel_state->run = 0;
+  mel_state->one = 0;
+}
+
 static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer, const uint8_t *array)
 {
   uint64_t tmp = 0;
@@ -226,3 +269,99 @@ static av_always_inline uint64_t jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream
   return stream->bit_buf & mask;
 }
 
+
+int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
+{
+  uint8_t p0 = 0;    // Number of placeholder passes.
+  uint32_t Lcup;     // Length of HT cleanup segment.
+  uint32_t Lref = 0; // Length of Refinement segment.
+  uint32_t Scup;     // HT cleanup segment suffix length.
+  uint32_t Pcup;     // HT cleanup segment prefix length.
+
+  uint8_t S_blk; // Bumber of skipped magnitude bitplanes;
+  uint8_t pLSB;
+
+  uint8_t *Dcup; // Byte of an HT cleanup segment.
+  uint8_t *Dref; // Byte of an HT refinement segment.
+
+
+  int z_blk; // Number of ht coding pass
+
+  uint8_t empty_passes;
+
+  StateVars mag_sgn;  // Magnitude and Sign
+  StateVars mel;      // Adaptive run-length coding
+  StateVars vlc;      // Variable Length coding
+  StateVars sig_prop; // Significance propagation
+  StateVars mag_ref;  // Magnitude and refinement.
+
+  MelDecoderState mel_state;
+
+  av_assert0(width <= 1024U && height <= 1024U);
+  av_assert0(width*height <= 4096);
+  memset(t1->data,0, t1->stride*height*sizeof(*t1->data));
+
+  memset(t1->flags, 0, t1->stride * (height + 2) * sizeof(*t1->flags));
+  int ret;
+
+  if (cblk->npasses == 0) {
+    return 0;
+  }
+
+  if (cblk->npasses > 3)
+    // TODO:(cae) Add correct support for this
+    // Currently use this as a dummy but should be fixed soon
+    p0 = 0;
+  else if (cblk->length == 0)
+    p0 = 1;
+
+  empty_passes = p0 * 3;
+  z_blk = cblk->npasses - empty_passes;
+
+  if (z_blk <= 0)
+    // no passes within this set, continue
+    return 0;
+
+  Lcup = cblk->length;
+  if (Lcup < 2) {
+    av_log(s->avctx, AV_LOG_ERROR, "Cleanup pass length must be at least 2 bytes in length");
+    return AVERROR_INVALIDDATA;
+  }
+  Dcup = cblk->data;
+  // Dref comes after the refinement segment.
+  Dref = cblk->data + Lcup;
+  S_blk = p0 + cblk->zbp;
+
+  pLSB = 30 - S_blk;
+
+  Scup = (Dcup[Lcup - 1] << 4) | (Dcup[Lcup - 2] & 0x0F);
+
+  if (Scup < 2 || Scup > Lcup || Scup > 4079) {
+    av_log(s->avctx, AV_LOG_ERROR, "Cleanup pass suffix length is invalid %d", Scup);
+    return AVERROR_INVALIDDATA;
+  }
+
+  Pcup = Lcup - Scup;
+
+  // modDcup (shall be done before the creation of state_VLC instance)
+  Dcup[Lcup - 1] = 0xFF;
+  Dcup[Lcup - 2] |= 0x0F;
+
+  jpeg2000_init_zero(&mag_sgn);
+  jpeg2000_bitbuf_refill_forwards(&mag_sgn, Dcup, Pcup);
+
+  jpeg2000_init_zero(&sig_prop);
+
+  jpeg2000_init_mel(&mel, Pcup);
+
+  jpeg2000_init_vlc(&vlc, Lcup, Pcup, Dcup);
+  jpeg2000_bitbuf_refill_backwards(&vlc, Dcup + Pcup);
+  jpeg2000_bitbuf_drop_bits_lsb(&vlc, 4);
+
+  jpeg2000_init_mag_ref(&mag_ref, Lref);
+
+  jpeg2000_init_mel_decoder(&mel_state);
+
+  return 1;
+
+}
