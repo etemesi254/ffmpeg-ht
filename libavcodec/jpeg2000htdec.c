@@ -522,7 +522,15 @@ static int jpeg2000_decode_ht_cleanup(
  uint32_t recp_freq;
  uint32_t recp_shift;
 
+ uint8_t  *sigma;
+ uint32_t  *mu;
+
  const uint8_t *vlc_buf = Dcup + Pcup;
+ // convert to raster-scan
+ const uint16_t is_border_x = width % 2;
+ const uint16_t is_border_y = height % 2;
+
+ int j1, j2;
 
  const uint16_t quad_width = ff_jpeg2000_ceildivpow2(width, 1);
  const uint16_t quad_height = ff_jpeg2000_ceildivpow2(height, 1);
@@ -549,6 +557,10 @@ static int jpeg2000_decode_ht_cleanup(
           "Could not allocate %zu bytes for mu_n buffer,", buf_size);
    goto error;
  }
+
+ sigma = sigma_n;
+ mu = mu_n;
+
  while (q < quad_width - 1) {
    q1 = q;
    q2 = q1 + 1;
@@ -983,6 +995,47 @@ static int jpeg2000_decode_ht_cleanup(
    }
  }
  // convert to raster-scan
+
+
+
+
+ for (int y = 0; y < quad_height; y++) {
+   for (int x = 0; x < quad_width; x++) {
+     j1 = 2 * y;
+     j2 = 2 * x;
+
+     // set sample
+     t1->data[j2 + (j1 * quad_width)] = *mu;
+     // modify state
+     t1->flags[(j1 + 1) * (width + 2) + (j2 + 1)] |= *sigma;
+
+     sigma += 1;
+     mu += 1;
+
+     if (y != quad_height - 1 || is_border_y == 0) {
+       t1->data[j2 + ((j1 + 1) * quad_width)] = *mu;
+       t1->flags[(j1 + 2) * (width + 2) + (j2 + 1)] |= *sigma;
+     }
+
+     sigma += 1;
+     mu += 1;
+
+     if (x != quad_width - 1 || is_border_x == 0) {
+       t1->data[(j2 + 1) + (j1 * quad_width)] = *mu;
+       t1->flags[(j1 + 1) * (width + 2) + (j2 + 2)] |= *sigma;
+     }
+
+     sigma += 1;
+     mu += 1;
+
+     if ((y != quad_height - 1 || is_border_y == 0) && (x != quad_width - 1 || is_border_x == 0)) {
+       t1->data[(j2 + 1) + (j1 + 1) * quad_width] = *mu;
+       t1->flags[(j1 + 2) * (width + 2) + (j2 + 2)] |= *sigma;
+     }
+     sigma += 1;
+     mu += 1;
+   }
+ }
  av_freep(&sigma_n);
  av_freep(&E);
  av_freep(&mu_n);
@@ -1006,7 +1059,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty,
  uint8_t pLSB;
 
  uint8_t *Dcup; // Byte of an HT cleanup segment.
- uint8_t *Dref; // Byte of an HT refinement segment.
+// uint8_t *Dref; // Byte of an HT refinement segment.
 
  int z_blk; // Number of ht coding pass
 
@@ -1054,7 +1107,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty,
  }
  Dcup = cblk->data;
  // Dref comes after the refinement segment.
- Dref = cblk->data + Lcup;
+// Dref = cblk->data + Lcup;
  S_blk = p0 + cblk->zbp;
 
  pLSB = 30 - S_blk;
