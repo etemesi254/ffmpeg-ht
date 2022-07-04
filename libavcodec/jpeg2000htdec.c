@@ -35,6 +35,7 @@
 
 #define J2K_Q2 1
 
+static int COUNTER = 0;
 /**
 * @brief Table 2 in clause 7.3.3
 * */
@@ -386,6 +387,9 @@ recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2],
    known_1[pos] = (emb_pat_1[pos] >> i) & 1;
    v[pos][i] = jpeg2000_decode_mag_sgn(mag_sgn, m_n[pos], known_1[pos], Dcup, Pcup);
    if (m_n[pos] != 0) {
+     if (n==97){
+       //printf("\n%d %d %d\n",v[pos][i],m_n[pos],n);
+     }
      E[n] = 32 - ff_clz(v[pos][i]);
      mu_n[n] = (v[pos][i] >> 1) + 1;
      mu_n[n] <<= pLSB;
@@ -516,7 +520,7 @@ static int jpeg2000_decode_ht_cleanup(
 
  uint8_t kappa[2] = {1, 1};
 
- int sp;
+int sp;
 
  uint32_t shift;
  uint32_t recp_freq;
@@ -755,8 +759,7 @@ static int jpeg2000_decode_ht_cleanup(
    U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
 
    for (int i = 0; i < 4; i++)
-     m[J2K_Q1][i] =
-         sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
+     m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
 
    recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
                    E, mu_n, Dcup, Pcup, pLSB);
@@ -920,6 +923,12 @@ static int jpeg2000_decode_ht_cleanup(
        m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
        m[J2K_Q2][i] = sigma_n[4 * q2 + i] * U[J2K_Q2] - ((emb_pat_k[J2K_Q2] >> i) & 1);
      }
+     if (COUNTER==1) {
+       printf("[%d] %d %d %d\n",q,E_n[0],E_n[1],4 * (q1 - quad_width) + 1);
+       if (q >=90){
+         exit(1);
+       }
+     }
 
      recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
                      E, mu_n, Dcup, Pcup, pLSB);
@@ -995,10 +1004,6 @@ static int jpeg2000_decode_ht_cleanup(
    }
  }
  // convert to raster-scan
-
-
-
-
  for (int y = 0; y < quad_height; y++) {
    for (int x = 0; x < quad_width; x++) {
      j1 = 2 * y;
@@ -1036,6 +1041,7 @@ static int jpeg2000_decode_ht_cleanup(
      mu += 1;
    }
  }
+ COUNTER+=1;
  av_freep(&sigma_n);
  av_freep(&E);
  av_freep(&mu_n);
