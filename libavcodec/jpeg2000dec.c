@@ -565,7 +565,7 @@ static int get_cap(Jpeg2000DecoderContext *s, int len) {
      *  Also since the spec addresses Pcap¹ as the most significant bit of 1(31st bit),the
      *  array also takes that into account, storing at ccap[1] if (Pcap & 1<<31) == 1
    */
-  for (int i=0;i<32;i++)
+  for (int i=1;i<32;i++)
     if (s->pcap & (1<<(32-i)))
       s->ccap[i] = bytestream2_get_be16u(&(s->g));
 
