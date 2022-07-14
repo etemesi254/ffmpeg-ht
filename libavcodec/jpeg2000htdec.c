@@ -25,6 +25,8 @@
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "bytestream.h"
 
@@ -36,6 +38,8 @@
 #define J2K_Q2 1
 
 static int COUNTER = 0;
+
+static int P = 0;
 /**
  * @brief Table 2 in clause 7.3.3
  * */
@@ -122,14 +126,13 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
         position = 0;
     }
     // check for stuff bytes (0xff)
-    if (has_byte(tmp, 0xff)) {
+    // if (has_byte(tmp, 0xff))
+    {
         // borrowed from open_htj2k ht_block_decoding.cpp
-
         // TODO(cae): confirm this is working
-
         // Load the next byte to check for stuffing.
         tmp <<= 8;
-        tmp |= (uint64_t) * (array + position);
+        tmp |= (uint64_t) * (array + position + 1);
         if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
             tmp &= 0x7FFFFFFFFF;
             new_bits--;
@@ -171,75 +174,6 @@ static void jpeg2000_bitbuf_refill_bytewise(StateVars *buffer,
         buffer->bits_left += buffer->bits;
     }
 }
-static int jpeg2000_bitbuf_refill_forwards(StateVars *buffer,
-                                           const uint8_t *array,
-                                           uint32_t length)
-{
-    uint64_t tmp = 0;
-    int32_t position = buffer->pos;
-    int new_bits = 32;
-
-    uint32_t remaining = av_sat_sub32(length, buffer->pos);
-
-    // TODO: (cae), confirm if we need to swap in BE systems.
-    if (buffer->bits_left > 32)
-        return 0; // enough data, no need to pull in more bits
-
-    if (remaining >= 4) {
-        memcpy(&tmp, array + position, 4);
-        position += 4;
-    } else if (remaining == 3) {
-        memcpy(&tmp, array + position, 3);
-        position += 3;
-        new_bits -= 8;
-    } else if (remaining == 2) {
-        memcpy(&tmp, array + position, 2);
-        position += 2;
-        new_bits -= 16;
-    } else if (remaining == 1) {
-        memcpy(&tmp, array + position, 1);
-        position += 1;
-        new_bits -= 24;
-    } else {
-        if (buffer->bits_left == 0) {
-            av_assert0(0);
-        }
-        return 1;
-    }
-    // check for stuff bytes (0xff)
-    if (has_byte(tmp, 0xff)) {
-        // borrowed from open_htj2k ht_block_decoding.cpp
-
-        // TODO(cae): confirm this is working
-
-        // Load the next byte to check for stuffing.
-        tmp <<= 8;
-        tmp |= (uint64_t) * (array + position);
-        if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
-            tmp &= 0x7FFFFFFFFF;
-            new_bits--;
-        }
-        if ((tmp & 0x007FFF0000) > 0x007F8F0000) {
-            tmp = (tmp & 0x007FFFFFFF) + ((tmp & 0xFF00000000) >> 1);
-            new_bits--;
-        }
-        if ((tmp & 0x00007FFF00) > 0x00007F8F00) {
-            tmp = (tmp & 0x00007FFFFF) + ((tmp & 0xFFFF000000) >> 1);
-            new_bits--;
-        }
-        if ((tmp & 0x0000007FFF) > 0x0000007F8F) {
-            tmp = (tmp & 0x0000007FFF) + ((tmp & 0xFFFFFF0000) >> 1);
-            new_bits--;
-        }
-        // remove temporary byte loaded.
-        tmp >>= 8;
-    }
-    // Add bits to the MSB of the bit buffer
-    buffer->bit_buf |= tmp << buffer->bits_left;
-    buffer->bits_left += new_bits;
-    buffer->pos = position;
-    return 0;
-};
 
 /**
  * @brief Drops bits from lower bits in the bit buffer
@@ -322,6 +256,10 @@ static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s,
     av_assert0(index < 1024);
 
     value = table[index];
+
+    if (P) {
+        printf("%d %d %d %d\n", index, value, context, code_word);
+    }
     len = (value & 0x000F) >> 1;
 
     res_off[pos] = (uint8_t)(value & 1);
@@ -408,7 +346,7 @@ recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2], int
         known_1[pos] = (emb_pat_1[pos] >> i) & 1;
         v[pos][i] = jpeg2000_decode_mag_sgn(mag_sgn, m_n[pos], known_1[pos], Dcup, Pcup);
         if (m_n[pos] != 0) {
-            E[n] = 32 - v[pos][i] == 0 ? 31 : ff_clz(v[pos][i]);
+            E[n] = 32 - ff_clz(v[pos][i] | 1);
             mu_n[n] = (v[pos][i] >> 1) + 1;
             mu_n[n] <<= pLSB;
             mu_n[n] |= ((uint32_t)(v[pos][i] & 1)) << 31; // sign bit.
@@ -558,18 +496,20 @@ static int jpeg2000_decode_ht_cleanup(
     uint8_t *E = av_calloc(buf_size, sizeof(uint8_t));
     uint32_t *mu_n = av_calloc(buf_size, sizeof(uint32_t));
 
+    printf("%d %d\n", quad_width, quad_height);
+
     if (!sigma_n) {
         av_log(s->avctx, AV_LOG_ERROR,
                "Could not allocate %zu bytes for sigma_n buffer", buf_size);
         goto error;
     }
     if (!E) {
-        av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for E buffer.",buf_size);
+        av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for E buffer.", buf_size);
         goto error;
     }
 
     if (!mu_n) {
-        av_log(s->avctx, AV_LOG_ERROR,"Could not allocate %zu bytes for mu_n buffer.", buf_size);
+        av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for mu_n buffer.", buf_size);
         goto error;
     }
 
@@ -587,26 +527,11 @@ static int jpeg2000_decode_ht_cleanup(
             == -1)
             goto error;
 
-        if (res_off[J2K_Q1] == 0) {
-            if (emb_pat_k[J2K_Q1] != 0) {
-                av_log(s->avctx, AV_LOG_ERROR,
-                       "Exponent Maximum bound K is %d but should be 0",
-                       emb_pat_k[J2K_Q1]);
-                goto error;
-            }
-            if (emb_pat_1[J2K_Q1] != 0) {
-                av_log(s->avctx, AV_LOG_ERROR,
-                       "Exponent Maximum bound 1 is %d but should be 0",
-                       emb_pat_1[J2K_Q1]);
-                goto error;
-            }
-        }
-
         for (int i = 0; i < 4; i++)
             sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
 
         // calculate context
-        context  = sigma_n[4 * q1];           // f
+        context = sigma_n[4 * q1];           // f
         context |= sigma_n[4 * q1 + 1];      // sf
         context += sigma_n[4 * q1 + 2] << 1; // w << 1
         context += sigma_n[4 * q1 + 3] << 2;
@@ -618,23 +543,11 @@ static int jpeg2000_decode_ht_cleanup(
             == -1)
             goto error;
 
-        if (res_off[J2K_Q2] == 0) {
-            if (emb_pat_k[J2K_Q2] != 0) {
-                av_log(s->avctx, AV_LOG_ERROR,"Exponent Maximum bound K is %d but should be 0",emb_pat_k[J2K_Q2]);
-                goto error;
-            }
-            if (emb_pat_1[J2K_Q2] != 0) {
-                av_log(s->avctx, AV_LOG_ERROR,"Exponent Maximum bound 1 is %d but should be 0",emb_pat_1[J2K_Q1]);
-                goto error;
-            }
-        }
-
         for (int i = 0; i < 4; i++)
             sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
 
-
         // calculate context for the next quad
-        context  = sigma_n[4 * q2];           // f
+        context = sigma_n[4 * q2];           // f
         context |= sigma_n[4 * q2 + 1];      // sf
         context += sigma_n[4 * q2 + 2] << 1; // w << 1
         context += sigma_n[4 * q2 + 3] << 2; // sw << 2
@@ -704,11 +617,10 @@ static int jpeg2000_decode_ht_cleanup(
         U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
 
         for (int i = 0; i < 4; i++) {
-
             m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
             m[J2K_Q2][i] = sigma_n[4 * q2 + i] * U[J2K_Q2] - ((emb_pat_k[J2K_Q2] >> i) & 1);
         }
-        // Recover magsgn value
+
         recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
                         E, mu_n, Dcup, Pcup, pLSB);
 
@@ -721,8 +633,6 @@ static int jpeg2000_decode_ht_cleanup(
         q += 2;
     }
     if (quad_width % 2 == 1) { // If the quad width is an odd number
-        // TODO: (cae), confirm everything is working here
-        // this codebase wasn't triggered  in the test case
         q1 = q;
 
         if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
@@ -731,17 +641,6 @@ static int jpeg2000_decode_ht_cleanup(
                                     Pcup)
             == -1)
             goto error;
-
-        if (res_off[J2K_Q1] == 0) {
-            if (emb_pat_k[J2K_Q1] != 0) {
-                av_log(s->avctx, AV_LOG_ERROR, "Exponent Maximum bound K is %d but should be 0", emb_pat_k[J2K_Q1]);
-                goto error;
-            }
-            if (emb_pat_1[J2K_Q1] != 0) {
-                av_log(s->avctx, AV_LOG_ERROR, "Exponent Maximum bound 1 is %d but should be 0", emb_pat_1[J2K_Q1]);
-                goto error;
-            }
-        }
 
         for (int i = 0; i < 4; i++)
             sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
@@ -752,14 +651,13 @@ static int jpeg2000_decode_ht_cleanup(
             u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
             u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
             u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-            u[J2K_Q1] = u[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+            u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
         }
 
         U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
 
         for (int i = 0; i < 4; i++) {
             m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
-            av_assert0(4 * q1 + i < buf_size);
         }
         recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
                         E, mu_n, Dcup, Pcup, pLSB);
@@ -767,7 +665,6 @@ static int jpeg2000_decode_ht_cleanup(
         q++; // move to next quad pair
     }
     // initial line pair end.
-
     /*
      * As an optimization, we can save some cycles in the inner loop if
      * we replace modulo operations with multiplications by integer reciprocals.
@@ -793,36 +690,42 @@ static int jpeg2000_decode_ht_cleanup(
         while ((q - (row * quad_width)) < quad_width - 1 && q < (quad_height * quad_width)) {
             q1 = q;
             q2 = q + 1;
-
             context1 = sigma_n[4 * (q1 - quad_width) + 1];
-
             context1 += sigma_n[4 * (q1 - quad_width) + 3] << 2; // ne
 
-            if (get_rem(q1, quad_width, recp_freq, recp_shift)) {
+            if (COUNTER == 5 && q > 400) {
+                P = 1;
+                printf("[%d] %d %d %d %d %d %d %d\n", q, U[1], res_off[0], res_off[1], u_pfx[0], u_pfx[1], context1, context2);
+            }
+            // if (get_rem(q1, quad_width, recp_freq, recp_shift)) {
+            if (q1 % quad_width) {
                 context1 |= sigma_n[4 * (q1 - quad_width) - 1];               // nw
                 context1 += (sigma_n[4 * q1 - 1] | sigma_n[4 * q1 - 2]) << 1; // sw| q
             }
-            if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
+            //  if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
+            if ((q1 + 1) % quad_width)
                 context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
 
             if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
                                         dec_CxtVLC_table1, Dcup, sig_pat, res_off,
                                         emb_pat_k, emb_pat_1, J2K_Q1, context1, Lcup,
-                                        Pcup)== -1)
+                                        Pcup)
+                == -1)
                 goto error;
 
             for (int i = 0; i < 4; i++) {
-                av_assert0(4 * q1 + i < buf_size);
                 sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
             }
             context2 = sigma_n[4 * (q2 - quad_width) + 1];
             context2 += sigma_n[4 * (q2 - quad_width) + 3] << 2;
 
-            if (get_rem(q2, quad_width, recp_freq, recp_shift)) {
+            // if (get_rem(q2, quad_width, recp_freq, recp_shift)) {
+            if (q2 % quad_width) {
                 context2 |= sigma_n[4 * (q2 - quad_width) - 1];
                 context2 += (sigma_n[4 * q2 - 1] | sigma_n[4 * q2 - 2]) << 1;
             }
-            if (get_rem(q2 + 1, quad_width, recp_freq, recp_shift))
+            //    if (get_rem(q2 + 1, quad_width, recp_freq, recp_shift))
+            if ((q2 + 1) % quad_width)
                 context2 |= sigma_n[4 * (q2 - quad_width) + 5] << 2;
 
             if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
@@ -832,10 +735,8 @@ static int jpeg2000_decode_ht_cleanup(
                 == -1)
                 goto error;
 
-            for (int i = 0; i < 4; i++) {
-                av_assert0(4 * q1 + i < buf_size);
+            for (int i = 0; i < 4; i++)
                 sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
-            }
 
             // fallback if res_off = [0,0]
             u[J2K_Q1] = 0;
@@ -918,19 +819,9 @@ static int jpeg2000_decode_ht_cleanup(
             U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
 
             for (int i = 0; i < 4; i++) {
-                av_assert0(4 * q1 + i < buf_size);
-
-                av_assert0(4 * q2 + i < buf_size);
                 m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
                 m[J2K_Q2][i] = sigma_n[4 * q2 + i] * U[J2K_Q2] - ((emb_pat_k[J2K_Q2] >> i) & 1);
             }
-            //     if (COUNTER==1) {
-            //       printf("[%d] %d %d %d\n",q,E_n[0],E_n[1],4 * (q1 - quad_width) +
-            //       1); if (q >=90){
-            //         exit(1);
-            //       }
-            //     }
-
             recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
                             E, mu_n, Dcup, Pcup, pLSB);
 
@@ -971,7 +862,7 @@ static int jpeg2000_decode_ht_cleanup(
                 u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
                 u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
                 u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-                u[J2K_Q1] = u[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+                u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
             }
 
             sp = sig_pat[J2K_Q1];
@@ -1049,7 +940,7 @@ static int jpeg2000_decode_ht_cleanup(
         }
     }
     COUNTER += 1;
-    printf("%d\n", COUNTER);
+    // printf("%d\n", COUNTER);
     av_freep(&sigma_n);
     av_freep(&E);
     av_freep(&mu_n);
@@ -1060,6 +951,33 @@ error:
     av_freep(&mu_n);
     return 0;
 }
+
+
+static void jpeg2000_decode_ht_sigprop(Jpeg2000DecoderContext *s, int block_width, int block_height, uint8_t *data, uint32_t Lref, uint8_t pSLB)
+{
+    StateVars sp_dec;
+
+    const uint16_t num_v_stripe = block_height / 4;
+    const uint16_t num_h_stripe = block_width / 4;
+    uint16_t i_start = 0, j_start = 0;
+    uint16_t width = 4;
+    uint16_t width_last = 0;
+    uint16_t height = 4;
+    const uint16_t dum_stride = block_width + 2;
+
+    jpeg2000_init_zero(&sp_dec);
+
+    
+
+
+    for (uint16_t n1 = 0; n1 < num_v_stripe; n1++) {
+        j_start = 0;
+        for (uint16_t n2 = 0; n2 < num_h_stripe; n2++) {
+
+            j_start += 4;
+        }
+    }
+}
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
     uint8_t p0 = 0;    // Number of placeholder passes.
@@ -1068,11 +986,11 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     uint32_t Scup;     // HT cleanup segment suffix length.
     uint32_t Pcup;     // HT cleanup segment prefix length.
 
-    uint8_t S_blk; // Bumber of skipped magnitude bitplanes;
+    uint8_t S_blk; // Number of skipped magnitude bitplanes;
     uint8_t pLSB;
 
-    uint8_t *Dcup; // Byte of an HT cleanup segment.
-                   // uint8_t *Dref; // Byte of an HT refinement segment.
+    uint8_t *Dcup;     // Byte of an HT cleanup segment.
+    uint8_t *Dref;     // Byte of an HT refinement segment.
 
     int z_blk; // Number of ht coding pass
 
@@ -1115,12 +1033,13 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     Lcup = cblk->length;
     if (Lcup < 2) {
         av_log(s->avctx, AV_LOG_ERROR,
-               "Cleanup pass length must be at least 2 bytes in length");
+               "Cleanup pass length must be at least 2 bytes in length\n");
         return AVERROR_INVALIDDATA;
     }
+    printf("DS\n");
     Dcup = cblk->data;
     // Dref comes after the refinement segment.
-    // Dref = cblk->data + Lcup;
+    Dref = cblk->data + Lcup;
     S_blk = p0 + cblk->zbp;
 
     pLSB = 30 - S_blk;
@@ -1128,7 +1047,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     Scup = (Dcup[Lcup - 1] << 4) | (Dcup[Lcup - 2] & 0x0F);
 
     if (Scup < 2 || Scup > Lcup || Scup > 4079) {
-        av_log(s->avctx, AV_LOG_ERROR, "Cleanup pass suffix length is invalid %d",
+        av_log(s->avctx, AV_LOG_ERROR, "Cleanup pass suffix length is invalid %d\n",
                Scup);
         return AVERROR_INVALIDDATA;
     }
@@ -1140,7 +1059,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     Dcup[Lcup - 2] |= 0x0F;
 
     jpeg2000_init_zero(&mag_sgn);
-    jpeg2000_bitbuf_refill_forwards(&mag_sgn, Dcup, Pcup);
+    jpeg2000_bitbuf_refill_bytewise(&mag_sgn, Dcup, Pcup);
 
     jpeg2000_init_zero(&sig_prop);
 
@@ -1154,8 +1073,13 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     jpeg2000_init_mel_decoder(&mel_state);
 
-    ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn,
-                                     Dcup, Lcup, Pcup, pLSB, width, height);
+   ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn,
+    //                   
 
-    return ret;
+
+//    if (z_blk > 1) {
+//        jpeg2000_decode_ht_sigprop(s, width, height, Dref, Lref, pLSB);
+//    }
+  //  exit(1);
+    return 0;
 }
