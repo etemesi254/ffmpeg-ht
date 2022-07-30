@@ -285,7 +285,7 @@ typedef struct Jpeg2000Tile {
   GetByteContext      packed_headers_stream;  // byte context corresponding to packed headers
   uint16_t tp_idx;                    // Tile-part index
   int coord[2][2];                    // border coordinates {{x0, x1}, {y0, y1}}
-} Jpeg2000Tile;
+} Jpeg2000DecTile;
 
 typedef struct Jpeg2000DecoderContext {
   AVClass         *class;
@@ -326,7 +326,7 @@ typedef struct Jpeg2000DecoderContext {
 
   int             curtileno;
 
-  Jpeg2000Tile    *tile;
+  Jpeg2000DecTile    *tile;
   Jpeg2000DSPContext dsp;
 
   /*options parameters*/
