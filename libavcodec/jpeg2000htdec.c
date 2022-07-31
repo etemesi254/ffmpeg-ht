@@ -437,7 +437,7 @@ static av_always_inline uint32_t get_rem(uint32_t num, uint32_t divisor, uint32_
 }
 
 static int jpeg2000_decode_ht_cleanup(
-    Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height)
+    Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height, int32_t *sample_buf, uint8_t *block_states)
 {
     uint16_t q = 0; // Represents current quad position.
     uint16_t q1, q2;
@@ -693,10 +693,6 @@ static int jpeg2000_decode_ht_cleanup(
             context1 = sigma_n[4 * (q1 - quad_width) + 1];
             context1 += sigma_n[4 * (q1 - quad_width) + 3] << 2; // ne
 
-            if (COUNTER == 5 && q > 400) {
-                P = 1;
-                printf("[%d] %d %d %d %d %d %d %d\n", q, U[1], res_off[0], res_off[1], u_pfx[0], u_pfx[1], context1, context2);
-            }
             // if (get_rem(q1, quad_width, recp_freq, recp_shift)) {
             if (q1 % quad_width) {
                 context1 |= sigma_n[4 * (q1 - quad_width) - 1];               // nw
@@ -908,32 +904,32 @@ static int jpeg2000_decode_ht_cleanup(
             j2 = 2 * x;
 
             // set sample
-            t1->data[j2 + (j1 * quad_width)] = *mu;
+            sample_buf[j2 + (j1 * width)] = *mu;
             // modify state
-            t1->flags[(j1 + 1) * (width + 2) + (j2 + 1)] |= *sigma;
+            block_states[(j1 + 1) * (width + 2) + (j2 + 1)] |= *sigma;
 
             sigma += 1;
             mu += 1;
 
             if (y != quad_height - 1 || is_border_y == 0) {
-                t1->data[j2 + ((j1 + 1) * quad_width)] = *mu;
-                t1->flags[(j1 + 2) * (width + 2) + (j2 + 1)] |= *sigma;
+                sample_buf[j2 + ((j1 + 1) * width)] = *mu;
+                block_states[(j1 + 2) * (width + 2) + (j2 + 1)] |= *sigma;
             }
 
             sigma += 1;
             mu += 1;
 
             if (x != quad_width - 1 || is_border_x == 0) {
-                t1->data[(j2 + 1) + (j1 * quad_width)] = *mu;
-                t1->flags[(j1 + 1) * (width + 2) + (j2 + 2)] |= *sigma;
+                sample_buf[(j2 + 1) + (j1 * width)] = *mu;
+                block_states[(j1 + 1) * (width + 2) + (j2 + 2)] |= *sigma;
             }
 
             sigma += 1;
             mu += 1;
 
             if ((y != quad_height - 1 || is_border_y == 0) && (x != quad_width - 1 || is_border_x == 0)) {
-                t1->data[(j2 + 1) + (j1 + 1) * quad_width] = *mu;
-                t1->flags[(j1 + 2) * (width + 2) + (j2 + 2)] |= *sigma;
+                sample_buf[(j2 + 1) + (j1 + 1) * width] = *mu;
+                block_states[(j1 + 2) * (width + 2) + (j2 + 2)] |= *sigma;
             }
             sigma += 1;
             mu += 1;
@@ -952,7 +948,6 @@ error:
     return 0;
 }
 
-
 static void jpeg2000_decode_ht_sigprop(Jpeg2000DecoderContext *s, int block_width, int block_height, uint8_t *data, uint32_t Lref, uint8_t pSLB)
 {
     StateVars sp_dec;
@@ -967,13 +962,9 @@ static void jpeg2000_decode_ht_sigprop(Jpeg2000DecoderContext *s, int block_widt
 
     jpeg2000_init_zero(&sp_dec);
 
-    
-
-
     for (uint16_t n1 = 0; n1 < num_v_stripe; n1++) {
         j_start = 0;
         for (uint16_t n2 = 0; n2 < num_h_stripe; n2++) {
-
             j_start += 4;
         }
     }
@@ -989,8 +980,8 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     uint8_t S_blk; // Number of skipped magnitude bitplanes;
     uint8_t pLSB;
 
-    uint8_t *Dcup;     // Byte of an HT cleanup segment.
-    uint8_t *Dref;     // Byte of an HT refinement segment.
+    uint8_t *Dcup; // Byte of an HT cleanup segment.
+    uint8_t *Dref; // Byte of an HT refinement segment.
 
     int z_blk; // Number of ht coding pass
 
@@ -1011,6 +1002,9 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     memset(t1->data, 0, t1->stride * height * sizeof(*t1->data));
 
     memset(t1->flags, 0, t1->stride * (height + 2) * sizeof(*t1->flags));
+
+    int32_t *sample_buf = av_calloc(width * height, sizeof(int32_t));
+    uint8_t *block_states = av_calloc((width + 2) * (height + 2), sizeof(uint8_t));
 
     if (cblk->npasses == 0) {
         return 0;
@@ -1036,7 +1030,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
                "Cleanup pass length must be at least 2 bytes in length\n");
         return AVERROR_INVALIDDATA;
     }
-    printf("DS\n");
     Dcup = cblk->data;
     // Dref comes after the refinement segment.
     Dref = cblk->data + Lcup;
@@ -1057,7 +1050,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     // modDcup (shall be done before the creation of state_VLC instance)
     Dcup[Lcup - 1] = 0xFF;
     Dcup[Lcup - 2] |= 0x0F;
-
     jpeg2000_init_zero(&mag_sgn);
     jpeg2000_bitbuf_refill_bytewise(&mag_sgn, Dcup, Pcup);
 
@@ -1073,7 +1065,45 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     jpeg2000_init_mel_decoder(&mel_state);
 
-   ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn,
+    ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states);
+    if (ret == 0)
+        goto error;
 
-    return 0;
+    if (cblk->nb_lengthinc > 1) {
+        // TODO: Confirm this works for images with more passes than 1.
+        Lref = cblk->lengthinc[1];
+    }
+    int n, val, sign;
+    uint8_t z_n;
+    int32_t N_b;
+    // TODO: Stop assuming
+    int32_t M_b = 8;
+    const uint32_t mask = UINT32_MAX >> (M_b + 1);
+    int *dst;
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            n = x + (y * t1->stride);
+            val = sample_buf[x + (y * width)];
+            sign = val & 0x80000000;
+            val &= 0x7fffffff;
+            int32_t N_b;
+            N_b = M_b;
+            int offset = M_b > N_b ? M_b - N_b : 0;
+            int r_val = 1 << (pLSB - 1 + offset);
+            if (val != 0 && N_b < M_b)
+                val |= r_val;
+            // convert sign-magnitude to twos complement form
+            if (sign)
+                val = -val;
+            t1->data[n] = val >> pLSB;
+        }
+    }
+
+    av_freep(&sample_buf);
+    av_freep(&block_states);
+    return ret;
+error:
+    av_freep(&sample_buf);
+    av_freep(&block_states);
+    return ret;
 }
