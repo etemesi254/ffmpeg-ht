@@ -35,8 +35,6 @@
 #define J2K_Q1 0
 
 #define J2K_Q2 1
-
-static int P = 0;
 /**
  * @brief Table 2 in clause 7.3.3
  * */
@@ -123,7 +121,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
         position = 0;
     }
     // check for stuff bytes (0xff)
-    // if (has_byte(tmp, 0xff))
+     if (has_byte(tmp, 0xff))
     {
         // borrowed from open_htj2k ht_block_decoding.cpp
         // TODO(cae): confirm this is working
@@ -254,9 +252,6 @@ static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s,
 
     value = table[index];
 
-    if (P) {
-        printf("%d %d %d %d\n", index, value, context, code_word);
-    }
     len = (value & 0x000F) >> 1;
 
     res_off[pos] = (uint8_t)(value & 1);
@@ -1060,7 +1055,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
             val = sample_buf[x + (y * width)];
             sign = val & 0x80000000;
             val &= 0x7fffffff;
-             N_b = M_b;
+            N_b = M_b;
             offset = M_b > N_b ? M_b - N_b : 0;
             r_val = 1 << (pLSB - 1 + offset);
             if (val != 0 && N_b < M_b)
