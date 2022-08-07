@@ -977,12 +977,9 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     memset(t1->flags, 0, t1->stride * (height + 2) * sizeof(*t1->flags));
 
-    sample_buf = av_calloc(width * height, sizeof(int32_t));
-    block_states = av_calloc((width + 2) * (height + 2), sizeof(uint8_t));
 
-    if (cblk->npasses == 0) {
-        goto free;
-    }
+    if (cblk->npasses == 0)
+        return 0;
 
     if (cblk->npasses > 3)
         // TODO:(cae) Add correct support for this
@@ -996,7 +993,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     if (z_blk <= 0)
         // no passes within this set, continue
-        goto free;
+        return 0;
 
     Lcup = cblk->length;
     if (Lcup < 2) {
@@ -1008,6 +1005,9 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     // Dref comes after the refinement segment.
     //    Dref = cblk->data + Lcup;
     S_blk = p0 + cblk->zbp;
+
+    sample_buf = av_calloc(width * height, sizeof(int32_t));
+    block_states = av_calloc((width + 2) * (height + 2), sizeof(uint8_t));
 
     pLSB = 30 - S_blk;
 
@@ -1063,7 +1063,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
             // convert sign-magnitude to twos complement form
             if (sign)
                 val = -val;
-            t1->data[n] = val >> pLSB;
+            t1->data[n] = val >> (pLSB-1);
         }
     }
 
