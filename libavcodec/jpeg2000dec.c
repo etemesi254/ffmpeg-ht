@@ -1114,10 +1114,10 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000DecTile *ti
                 return incl;
 
             if (!cblk->npasses) {
-              int zbp =  tag_tree_decode(s, prec->zerobits + cblkno, 100);
-              cblk->zbp = zbp;
+                int zbp =  tag_tree_decode(s, prec->zerobits + cblkno, 100);
                 int v = expn[bandno] + numgbits - 1 - zbp;
-                if (v < 0 || v > 30) {
+                cblk->zbp = zbp;
+                if (/*v < 0 ||*/ v > 30) {
                     av_log(s->avctx, AV_LOG_ERROR,
                            "nonzerobits %d invalid or unsupported\n", v);
                     return AVERROR_INVALIDDATA;
@@ -1161,9 +1161,20 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000DecTile *ti
                         break;
                     }
                 }
-
-                if ((ret = get_bits(s, av_log2(newpasses1) + cblk->lblock)) < 0)
-                    return ret;
+                if (newpasses > 1) {
+                    // retrieve pass lengths for each pass
+                    int extra_bit = newpasses > 2 ? 1 : 0;
+                    if ((ret = get_bits(s, llen + 3)) < 0)
+                        return ret;
+                    cblk->pass_lengths[0] = ret;
+                    if ((ret = get_bits(s, llen + 3 + extra_bit)) < 0)
+                        return ret;
+                    cblk->pass_lengths[1] = ret;
+                } else {
+                    if ((ret = get_bits(s, av_log2(newpasses1) + cblk->lblock)) < 0)
+                        return ret;
+                    cblk->pass_lengths[0] = ret;
+                }
                 if (ret > cblk->data_allocated) {
                     size_t new_size = FFMAX(2*cblk->data_allocated, ret);
                     void *new = av_realloc(cblk->data, new_size);
