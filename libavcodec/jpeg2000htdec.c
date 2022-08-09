@@ -121,8 +121,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
         position = 0;
     }
     // check for stuff bytes (0xff)
-     if (has_byte(tmp, 0xff))
-    {
+    if (has_byte(tmp, 0xff)) {
         // borrowed from open_htj2k ht_block_decoding.cpp
         // TODO(cae): confirm this is working
         // Load the next byte to check for stuffing.
@@ -462,6 +461,7 @@ static int jpeg2000_decode_ht_cleanup(
     int32_t v[2][4] = {0};
 
     uint8_t kappa[2] = {1, 1};
+    int ret = 0;
 
     int sp;
 
@@ -488,19 +488,9 @@ static int jpeg2000_decode_ht_cleanup(
     uint8_t *E = av_calloc(buf_size, sizeof(uint8_t));
     uint32_t *mu_n = av_calloc(buf_size, sizeof(uint32_t));
 
-    if (!sigma_n) {
-        av_log(s->avctx, AV_LOG_ERROR,
-               "Could not allocate %zu bytes for sigma_n buffer", buf_size);
-        goto error;
-    }
-    if (!E) {
-        av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for E buffer.", buf_size);
-        goto error;
-    }
-
-    if (!mu_n) {
-        av_log(s->avctx, AV_LOG_ERROR, "Could not allocate %zu bytes for mu_n buffer.", buf_size);
-        goto error;
+    if (!sigma_n || !E || !mu_n) {
+        ret = AVERROR(ENOMEM);
+        goto free;
     }
 
     sigma = sigma_n;
@@ -510,12 +500,12 @@ static int jpeg2000_decode_ht_cleanup(
         q1 = q;
         q2 = q1 + 1;
 
-        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                    dec_CxtVLC_table0, Dcup, sig_pat, res_off,
-                                    emb_pat_k, emb_pat_1, J2K_Q1, context, Lcup,
-                                    Pcup)
-            == -1)
-            goto error;
+        if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
+                                           dec_CxtVLC_table0, Dcup, sig_pat, res_off,
+                                           emb_pat_k, emb_pat_1, J2K_Q1, context, Lcup,
+                                           Pcup))
+            < 0)
+            goto free;
 
         for (int i = 0; i < 4; i++)
             sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
@@ -526,12 +516,12 @@ static int jpeg2000_decode_ht_cleanup(
         context += sigma_n[4 * q1 + 2] << 1; // w << 1
         context += sigma_n[4 * q1 + 3] << 2;
 
-        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                    dec_CxtVLC_table0, Dcup, sig_pat, res_off,
-                                    emb_pat_k, emb_pat_1, J2K_Q2, context, Lcup,
-                                    Pcup)
-            == -1)
-            goto error;
+        if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
+                                           dec_CxtVLC_table0, Dcup, sig_pat, res_off,
+                                           emb_pat_k, emb_pat_1, J2K_Q2, context, Lcup,
+                                           Pcup))
+            < 0)
+            goto free;
 
         for (int i = 0; i < 4; i++)
             sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
@@ -625,12 +615,12 @@ static int jpeg2000_decode_ht_cleanup(
     if (quad_width % 2 == 1) { // If the quad width is an odd number
         q1 = q;
 
-        if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                    dec_CxtVLC_table0, Dcup, sig_pat, res_off,
-                                    emb_pat_k, emb_pat_1, J2K_Q1, context, Lcup,
-                                    Pcup)
-            == -1)
-            goto error;
+        if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
+                                           dec_CxtVLC_table0, Dcup, sig_pat, res_off,
+                                           emb_pat_k, emb_pat_1, J2K_Q1, context, Lcup,
+                                           Pcup))
+            < 0)
+            goto free;
 
         for (int i = 0; i < 4; i++)
             sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
@@ -646,9 +636,9 @@ static int jpeg2000_decode_ht_cleanup(
 
         U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 4; i++)
             m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
-        }
+
         recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
                         E, mu_n, Dcup, Pcup, pLSB);
 
@@ -690,12 +680,12 @@ static int jpeg2000_decode_ht_cleanup(
             if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
                 context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
 
-            if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                        dec_CxtVLC_table1, Dcup, sig_pat, res_off,
-                                        emb_pat_k, emb_pat_1, J2K_Q1, context1, Lcup,
-                                        Pcup)
-                == -1)
-                goto error;
+            if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
+                                               dec_CxtVLC_table1, Dcup, sig_pat, res_off,
+                                               emb_pat_k, emb_pat_1, J2K_Q1, context1, Lcup,
+                                               Pcup))
+                < 0)
+                goto free;
 
             for (int i = 0; i < 4; i++)
                 sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
@@ -710,12 +700,12 @@ static int jpeg2000_decode_ht_cleanup(
             if (get_rem(q2 + 1, quad_width, recp_freq, recp_shift))
                 context2 |= sigma_n[4 * (q2 - quad_width) + 5] << 2;
 
-            if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                        dec_CxtVLC_table1, Dcup, sig_pat, res_off,
-                                        emb_pat_k, emb_pat_1, J2K_Q2, context2, Lcup,
-                                        Pcup)
-                == -1)
-                goto error;
+            if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
+                                               dec_CxtVLC_table1, Dcup, sig_pat, res_off,
+                                               emb_pat_k, emb_pat_1, J2K_Q2, context2, Lcup,
+                                               Pcup))
+                < 1)
+                goto free;
 
             for (int i = 0; i < 4; i++)
                 sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
@@ -827,12 +817,12 @@ static int jpeg2000_decode_ht_cleanup(
             if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
                 context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
 
-            if (jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
-                                        dec_CxtVLC_table1, Dcup, sig_pat, res_off,
-                                        emb_pat_k, emb_pat_1, J2K_Q1, context1, Lcup,
-                                        Pcup)
-                == -1)
-                goto error;
+            if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
+                                               dec_CxtVLC_table1, Dcup, sig_pat, res_off,
+                                               emb_pat_k, emb_pat_1, J2K_Q1, context1, Lcup,
+                                               Pcup))
+                < 0)
+                goto free;
 
             for (int i = 0; i < 4; i++)
                 sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
@@ -921,15 +911,12 @@ static int jpeg2000_decode_ht_cleanup(
             mu += 1;
         }
     }
+    ret = 1;
+free:
     av_freep(&sigma_n);
     av_freep(&E);
     av_freep(&mu_n);
-    return 1;
-error:
-    av_freep(&sigma_n);
-    av_freep(&E);
-    av_freep(&mu_n);
-    return 0;
+    return ret;
 }
 
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
@@ -965,10 +952,9 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     uint8_t *block_states;
 
     // Post-processing
-    int n, val, sign,r_val,N_b,offset;
+    int n, val, sign, r_val, N_b, offset;
 
-
-   // TODO: Stop assuming
+    // TODO: Stop assuming
     int32_t M_b = 8;
 
     av_assert0(width <= 1024U && height <= 1024U);
@@ -976,7 +962,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     memset(t1->data, 0, t1->stride * height * sizeof(*t1->data));
 
     memset(t1->flags, 0, t1->stride * (height + 2) * sizeof(*t1->flags));
-
 
     if (cblk->npasses == 0)
         return 0;
@@ -995,7 +980,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         // no passes within this set, continue
         return 0;
 
-    Lcup = cblk->length;
+    Lcup = cblk->pass_lengths[0];
     if (Lcup < 2) {
         av_log(s->avctx, AV_LOG_ERROR,
                "Cleanup pass length must be at least 2 bytes in length\n");
@@ -1009,9 +994,12 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     sample_buf = av_calloc(width * height, sizeof(int32_t));
     block_states = av_calloc((width + 2) * (height + 2), sizeof(uint8_t));
 
+    if (!sample_buf || !block_states)
+        return AVERROR(ENOMEM);
+
     pLSB = 30 - S_blk;
 
-    Scup = (Dcup[Lcup - 1] << 4) | (Dcup[Lcup - 2] & 0x0F);
+    Scup = (Dcup[Lcup - 1] << 4) + (Dcup[Lcup - 2] & 0x0F);
 
     if (Scup < 2 || Scup > Lcup || Scup > 4079) {
         av_log(s->avctx, AV_LOG_ERROR, "Cleanup pass suffix length is invalid %d\n",
@@ -1044,10 +1032,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     if (ret == 0)
         goto free;
 
-    if (cblk->nb_lengthinc > 1) {
-        // TODO: Confirm this works for images with more passes than 1.
-        Lref = cblk->lengthinc[1];
-    }
 
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -1063,7 +1047,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
             // convert sign-magnitude to twos complement form
             if (sign)
                 val = -val;
-            t1->data[n] = val >> (pLSB-1);
+            t1->data[n] = val >> (pLSB - 1);
         }
     }
 
