@@ -1170,6 +1170,7 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000DecTile *ti
                     if ((ret = get_bits(s, llen + 3 + extra_bit)) < 0)
                         return ret;
                     cblk->pass_lengths[1] = ret;
+                    ret = cblk->pass_lengths[0] + cblk->pass_lengths[1];
                 } else {
                     if ((ret = get_bits(s, av_log2(newpasses1) + cblk->lblock)) < 0)
                         return ret;
