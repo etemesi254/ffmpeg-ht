@@ -506,7 +506,6 @@ static int jpeg2000_decode_ht_cleanup(
                                            Pcup))
             < 0)
             goto free;
-
         for (int i = 0; i < 4; i++)
             sigma_n[4 * q1 + i] = (sig_pat[J2K_Q1] >> i) & 1;
 
@@ -704,7 +703,7 @@ static int jpeg2000_decode_ht_cleanup(
                                                dec_CxtVLC_table1, Dcup, sig_pat, res_off,
                                                emb_pat_k, emb_pat_1, J2K_Q2, context2, Lcup,
                                                Pcup))
-                < 1)
+                < 0)
                 goto free;
 
             for (int i = 0; i < 4; i++)
@@ -872,8 +871,9 @@ static int jpeg2000_decode_ht_cleanup(
             // move to the next quad
             q++;
         }
+        printf("%d\n", row);
     }
-    // // convert to raster-scan
+    // convert to raster-scan
     for (int y = 0; y < quad_height; y++) {
         for (int x = 0; x < quad_width; x++) {
             j1 = 2 * y;
@@ -918,7 +918,60 @@ free:
     av_freep(&mu_n);
     return ret;
 }
+static int jpeg2000_calc_mbr(uint8_t *mbr, const uint16_t i, const uint16_t j, const uint32_t mbr_info, const uint8_t causal_cond)
+{
+    return 0;
+}
+static int jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s, int width, int height, int stride, int pLSB, int32_t *sample_buf, uint8_t *block_states)
+{
+    int32_t *sp;
+    uint8_t causal_cond = 0;
+    uint8_t bit;
+    uint8_t mbr;
+    uint32_t mbr_info;
 
+    for (int j = j_s; j < j_s + width; j++) {
+        mbr_info = 0;
+        for (int i = i_s; i < i_s + height; i++) {
+            sp = &sample_buf[j + (i * width)];
+            mbr = 0;
+            causal_cond = i != (i_s + height - 1);
+            if (block_states[(i + 1) * (width + 2) + (j + 1)] == 0) {
+                jpeg2000_calc_mbr(&mbr, i, j, mbr_info & 0x1EF, causal_cond);
+            }
+        }
+    }
+    return 0;
+}
+
+static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
+{
+    StateVars sp_dec;
+    const uint16_t num_v_stripe = height / 4;
+    const uint16_t num_h_stripe = width / 4;
+    int last_width;
+    int ret;
+    uint16_t i = 0, j = 0;
+
+    jpeg2000_init_zero(&sp_dec);
+    sp_dec.pos = magref_length;
+
+    for (int n1 = 0; n1 < num_v_stripe; n1++) {
+        j = 0;
+        for (int n2 = 0; n2 < num_h_stripe; n2++) {
+            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, width, height, width + 2, pLSB, sample_buf, block_states)) < 0)
+                return ret;
+            j += 4;
+        }
+        last_width = width % 4;
+        if (last_width) {
+            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, width, height, width + 2, pLSB, sample_buf, block_states)) < 0)
+                return ret;
+        }
+        i += 4;
+    }
+    return 0;
+}
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
     uint8_t p0 = 0;    // Number of placeholder passes.
@@ -931,7 +984,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     uint8_t pLSB;
 
     uint8_t *Dcup; // Byte of an HT cleanup segment.
-                   //    uint8_t *Dref; // Byte of an HT refinement segment.
+    uint8_t *Dref; // Byte of an HT refinement segment.
 
     int z_blk; // Number of ht coding pass
 
@@ -988,7 +1041,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     }
     Dcup = cblk->data;
     // Dref comes after the refinement segment.
-    //    Dref = cblk->data + Lcup;
+    Dref = cblk->data + Lcup;
     S_blk = p0 + cblk->zbp;
 
     sample_buf = av_calloc(width * height, sizeof(int32_t));
@@ -1007,7 +1060,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         ret = AVERROR_INVALIDDATA;
         goto free;
     }
-
     Pcup = Lcup - Scup;
 
     // modDcup (shall be done before the creation of state_VLC instance)
@@ -1028,10 +1080,12 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     jpeg2000_init_mel_decoder(&mel_state);
 
-    ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states);
-    if (ret == 0)
+    if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
-
+    if (cblk->npasses > 1) {
+        if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
+            goto free;
+    }
 
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
