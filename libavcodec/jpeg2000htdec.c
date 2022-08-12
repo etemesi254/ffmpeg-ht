@@ -58,7 +58,7 @@ static av_always_inline uint32_t has_byte(uint32_t dword, uint8_t byte)
     return has_zero(dword ^ (~0UL / 255 * (byte)));
 }
 
-/*Initializers*/
+/* Initializers */
 
 static void jpeg2000_init_zero(StateVars *s)
 {
@@ -76,16 +76,6 @@ static void jpeg2000_init_mel(StateVars *s, uint32_t Pcup)
     s->pos = Pcup;
 }
 
-static void jpeg2000_init_vlc(StateVars *s, uint32_t Lcup, uint32_t Pcup, const uint8_t *Dcup)
-{
-    s->bits_left = 0;
-    s->bit_buf = 0;
-    s->pos = Lcup - 2 - Pcup;
-    s->last = Dcup[Lcup - 2];
-    s->tmp = (s->last) >> 4;
-    s->bits = ((s->tmp & 7) < 7) ? 4 : 3;
-}
-
 static void jpeg2000_init_mag_ref(StateVars *s, uint32_t Lref)
 {
     s->pos = Lref - 1;
@@ -100,7 +90,11 @@ static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
     mel_state->run = 0;
     mel_state->one = 0;
 }
-
+/**
+ * Refill the buffer backwards in little Endian while skipping
+ * over stuffing bits that appear in the position of any byte whose
+ * LSBs are all 1's if the last consumed byte was larger than 0x8F
+ */
 static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
                                             const uint8_t *array)
 {
@@ -129,11 +123,14 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     }
     // check for stuff bytes (0xff)
     if (has_byte(tmp, 0xff)) {
-        // borrowed from open_htj2k ht_block_decoding.cpp
-        // TODO(cae): confirm this is working
-        // Load the next byte to check for stuffing.
+        // Un-stuff
+
+        // load temporary byte, which preceeds the position we
+        // currently at, to ensure that we can also un-stuff if the
+        // stuffed bit is the bottom most bits
         tmp <<= 8;
         tmp |= (uint64_t) * (array + position + 1);
+
         if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
             tmp &= 0x7FFFFFFFFF;
             new_bits--;
@@ -159,6 +156,8 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     buffer->pos = position;
     return 0;
 }
+
+/* Refill  the stream with bytes */
 static void jpeg2000_bitbuf_refill_bytewise(StateVars *buffer,
                                             const uint8_t *array,
                                             uint32_t length)
@@ -189,38 +188,41 @@ static av_always_inline void jpeg2000_bitbuf_drop_bits_lsb(StateVars *buf,
     buf->bit_buf >>= nbits;
     buf->bits_left -= nbits;
 }
-
+/**
+ * Get bits from the bit buffer reading them
+ * from the least significant bits moving to the most significant bits.
+ * in case there are fewer bits, refill from `buf` moving backwards.
+ * */
 static av_always_inline uint64_t jpeg2000_bitbuf_get_bits_lsb(
     StateVars *bit_stream, uint8_t nbits, const uint8_t *buf)
 {
-
     uint64_t bits;
     uint64_t mask = (1ull << nbits) - 1;
     if (bit_stream->bits_left < nbits)
         jpeg2000_bitbuf_refill_backwards(bit_stream, buf);
-
     bits = bit_stream->bit_buf & mask;
-
     jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
     return bits;
 };
-
+/**
+ * Get bits from the bit buffer reading them
+ * from the least significant bits moving to the most significant bits
+ * in case there are fewer bits, refill from `buf` moving forward
+ * */
 static av_always_inline uint64_t jpeg2000_bitbuf_get_bits_lsb_forward(
     StateVars *bit_stream, uint8_t nbits, const uint8_t *buf, uint32_t length)
 {
-
     uint64_t bits;
     uint64_t mask = (1ull << nbits) - 1;
     if (bit_stream->bits_left <= nbits)
-        // TODO: (cae) this may fail I  guess if there are no more bits,add a check
-        // for it.
         jpeg2000_bitbuf_refill_bytewise(bit_stream, buf, length);
-
     bits = bit_stream->bit_buf & mask;
     jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
     return bits;
 };
-
+/**
+ * Look ahead bit buffer without discarding bits
+ * */
 static av_always_inline uint64_t
 jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream, uint8_t nbits)
 {
@@ -229,8 +231,24 @@ jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream, uint8_t nbits)
     return stream->bit_buf & mask;
 }
 
-/* VLC decoding utilities */
+/* *
+ * Variable Length Decoding Routines
+ */
 
+static void jpeg2000_init_vlc(StateVars *s, uint32_t Lcup, uint32_t Pcup, const uint8_t *Dcup)
+{
+    s->bits_left = 0;
+    s->bit_buf = 0;
+    s->pos = Lcup - 2 - Pcup;
+    s->last = Dcup[Lcup - 2];
+    s->tmp = (s->last) >> 4;
+    s->bits = ((s->tmp & 7) < 7) ? 4 : 3;
+    jpeg2000_bitbuf_refill_backwards(s, Dcup + Pcup);
+    jpeg2000_bitbuf_drop_bits_lsb(s, 4);
+}
+/**
+ * Decode prefix codes for VLC segment.
+ */
 static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s,
                                    StateVars *vlc_stream,
                                    const uint16_t *table,
@@ -243,6 +261,7 @@ static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s,
                                    uint32_t Pcup,
                                    uint16_t context)
 {
+    // Described in clause 7.3.5
     uint32_t value;
     uint8_t len;
     int index;
@@ -267,10 +286,15 @@ static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s,
     jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, len);
     return 0;
 }
-
+/**
+ * Decode variable length u-vlc prefix
+ * */
 static av_always_inline uint8_t
 vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
 {
+    // clause 7.3.6
+    // procedure : decodeUPrefix.
+
     uint8_t bits;
     if (vlc_stream->bits_left < 3)
         jpeg2000_bitbuf_refill_backwards(vlc_stream, refill_array);
@@ -289,13 +313,15 @@ vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
 
     if (bits & 0b100)
         return 3;
-
     return 5;
 }
 
 static av_always_inline uint8_t vlc_decode_u_suffix(
     StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array)
 {
+    // clause 7.3.6
+    // procedure: decodeUSuffix
+
     uint8_t bits;
     if (suffix < 3)
         return 0;
@@ -317,6 +343,9 @@ static av_always_inline uint8_t vlc_decode_u_suffix(
 static av_always_inline uint8_t vlc_decode_u_extension(
     StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array)
 {
+    // clause 7.3.6
+    // procedure decodeUExtension.
+
     uint8_t bits;
     if (suffix < 28)
         return 0;
@@ -324,10 +353,14 @@ static av_always_inline uint8_t vlc_decode_u_extension(
     return bits;
 }
 
+/* Magnitude and Sign decode procedures*/
+
 static int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream, int32_t m_n, int32_t i_n, const uint8_t *buf, uint32_t length)
 {
-    int32_t val = 0;
+    // clause 7.3.8
+    // procedure: decodeMagSgnValue
 
+    int32_t val = 0;
     if (m_n > 0) {
         val = jpeg2000_bitbuf_get_bits_lsb_forward(mag_sgn_stream, m_n, buf, length);
         val += (i_n << m_n);
@@ -995,6 +1028,9 @@ static int jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s,
 
 static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
 {
+    // Described in clause 7.4
+    // procedure: decodeSigPropMag
+
     StateVars sp_dec;
     const uint16_t num_v_stripe = height / 4;
     const uint16_t num_h_stripe = width / 4;
@@ -1023,6 +1059,9 @@ static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t 
 
 static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t block_height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
 {
+    // Described in clause 7.5
+    // procedure: decodeSigPropMag
+
     StateVars mag_ref;
     const uint16_t num_v_stripe = block_height / 4;
     uint16_t height = 4;
@@ -1034,6 +1073,8 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
     for (int n1 = 0; n1 < num_v_stripe; n1++) {
         for (int j = 0; j < width; j++) {
             for (int i = i_start; i < i_start + height; i++) {
+                // we move column wise, going from one quad to another
+                // see figure 7.
                 sp = &sample_buf[j + i * width];
                 if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) == 0) {
                     // modify state
@@ -1147,19 +1188,18 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     }
     Pcup = Lcup - Scup;
 
-    // modDcup (shall be done before the creation of state_VLC instance)
+    // modDcup shall be done before the creation of vlc instance.
     Dcup[Lcup - 1] = 0xFF;
     Dcup[Lcup - 2] |= 0x0F;
+    // Magnitude and refinement
     jpeg2000_init_zero(&mag_sgn);
     jpeg2000_bitbuf_refill_bytewise(&mag_sgn, Dcup, Pcup);
-
+    // Significance propagation
     jpeg2000_init_zero(&sig_prop);
-
+    // Adaptive run length
     jpeg2000_init_mel(&mel, Pcup);
-
+    // Variable Length coding.
     jpeg2000_init_vlc(&vlc, Lcup, Pcup, Dcup);
-    jpeg2000_bitbuf_refill_backwards(&vlc, Dcup + Pcup);
-    jpeg2000_bitbuf_drop_bits_lsb(&vlc, 4);
 
     jpeg2000_init_mag_ref(&mag_ref, Lref);
 
@@ -1167,15 +1207,16 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
-    if (cblk->npasses > 1) {
+
+    if (cblk->npasses > 1)
         if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
             goto free;
-    }
-    if (cblk->npasses > 1) {
+
+    if (cblk->npasses > 2)
         if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
             goto free;
-    }
 
+    // Reconstruct the values.
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
             n = x + (y * t1->stride);
@@ -1193,10 +1234,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
             t1->data[n] = val >> (pLSB - 1);
         }
     }
-
-    av_freep(&sample_buf);
-    av_freep(&block_states);
-    return ret;
 free:
     av_freep(&sample_buf);
     av_freep(&block_states);
