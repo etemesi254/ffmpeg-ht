@@ -24,7 +24,7 @@
 #include "jpeg2000.h"
 
 typedef struct StateVars {
-  int32_t pos;
+  uint32_t pos;
   uint32_t bits;
   uint32_t tmp;
   uint32_t last;

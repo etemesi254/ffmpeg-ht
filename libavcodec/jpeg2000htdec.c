@@ -19,11 +19,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 #include "jpeg2000htdec.h"
-#include "libavutil/attributes.h"
-#include "libavutil/avassert.h"
-#include "libavutil/common.h"
-#include "libavutil/log.h"
-#include "libavutil/mem.h"
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -208,7 +203,7 @@ static av_always_inline uint64_t jpeg2000_bitbuf_get_bits_lsb(
     bits = bit_stream->bit_buf & mask;
     jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
     return bits;
-};
+}
 /**
  * Get bits from the bit buffer reading them
  * from the least significant bits moving to the most significant bits
@@ -224,7 +219,7 @@ static av_always_inline uint64_t jpeg2000_bitbuf_get_bits_lsb_forward(
     bits = bit_stream->bit_buf & mask;
     jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
     return bits;
-};
+}
 /**
  * Look ahead bit buffer without discarding bits
  * */
@@ -269,8 +264,8 @@ static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s,
     // Described in clause 7.3.5
     uint32_t value;
     uint8_t len;
-    int index;
-    int code_word;
+    uint64_t index;
+    uint64_t code_word;
 
     jpeg2000_bitbuf_refill_backwards(vlc_stream, Dcup + Pcup);
 
@@ -374,7 +369,7 @@ static int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream, int32_t m_n, i
 }
 
 static av_always_inline void
-recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2], int32_t known_1[2], uint8_t emb_pat_1[2], int32_t v[2][4], int32_t m[2][4], uint8_t *E, uint32_t *mu_n, const uint8_t *Dcup, uint32_t Pcup, uint32_t pLSB)
+recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2], int32_t known_1[2], const uint8_t emb_pat_1[2], int32_t v[2][4], int32_t m[2][4], uint8_t *E, uint32_t *mu_n, const uint8_t *Dcup, uint32_t Pcup, uint32_t pLSB)
 {
     for (int i = 0; i < 4; i++) {
         int32_t n = 4 * q + i;
@@ -892,7 +887,7 @@ static int jpeg2000_decode_ht_cleanup(
             j2 = 2 * x;
 
             // set sample
-            sample_buf[j2 + (j1 * width)] = *mu;
+            sample_buf[j2 + (j1 * width)] = (int32_t)*mu;
             // modify state
             block_states[(j1 + 1) * (width + 2) + (j2 + 1)] |= *sigma;
 
@@ -900,7 +895,7 @@ static int jpeg2000_decode_ht_cleanup(
             mu += 1;
 
             if (y != quad_height - 1 || is_border_y == 0) {
-                sample_buf[j2 + ((j1 + 1) * width)] = *mu;
+                sample_buf[j2 + ((j1 + 1) * width)] = (int32_t)*mu;
                 block_states[(j1 + 2) * (width + 2) + (j2 + 1)] |= *sigma;
             }
 
@@ -908,7 +903,7 @@ static int jpeg2000_decode_ht_cleanup(
             mu += 1;
 
             if (x != quad_width - 1 || is_border_x == 0) {
-                sample_buf[(j2 + 1) + (j1 * width)] = *mu;
+                sample_buf[(j2 + 1) + (j1 * width)] = (int32_t)*mu;
                 block_states[(j1 + 1) * (width + 2) + (j2 + 2)] |= *sigma;
             }
 
@@ -916,7 +911,7 @@ static int jpeg2000_decode_ht_cleanup(
             mu += 1;
 
             if ((y != quad_height - 1 || is_border_y == 0) && (x != quad_width - 1 || is_border_x == 0)) {
-                sample_buf[(j2 + 1) + (j1 + 1) * width] = *mu;
+                sample_buf[(j2 + 1) + (j1 + 1) * width] = (int32_t)*mu;
                 block_states[(j1 + 2) * (width + 2) + (j2 + 2)] |= *sigma;
             }
             sigma += 1;
@@ -930,7 +925,7 @@ free:
     av_freep(&mu_n);
     return ret;
 }
-static av_always_inline int jpeg2000_get_state(int x1, int x2, int width, int shift_by, uint8_t *block_states)
+static av_always_inline int jpeg2000_get_state(int x1, int x2, int width, int shift_by, const uint8_t *block_states)
 {
     return (block_states[(x1 + 1) * (width + 2) + (x2 + 1)] >> shift_by) & 1;
 }
@@ -1104,7 +1099,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     uint8_t *block_states;
 
     // Post-processing
-    int n, val, sign, r_val, N_b, offset;
+    int32_t n, val, sign, r_val, N_b, offset;
 
     // TODO: Stop assuming
     int32_t M_b = 8;
@@ -1112,7 +1107,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     av_assert0(width <= 1024U && height <= 1024U);
     av_assert0(width * height <= 4096);
     av_assert0(width * height > 0);
-    
+
     memset(t1->data, 0, t1->stride * height * sizeof(*t1->data));
     memset(t1->flags, 0, t1->stride * (height + 2) * sizeof(*t1->flags));
 
@@ -1143,7 +1138,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     // Dref comes after the refinement segment.
     Dref = cblk->data + Lcup;
     S_blk = p0 + cblk->zbp;
-    
+
     pLSB = 30 - S_blk;
 
     Scup = (Dcup[Lcup - 1] << 4) + (Dcup[Lcup - 2] & 0x0F);
@@ -1172,15 +1167,15 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     jpeg2000_init_mag_ref(&mag_ref, Lref);
 
     jpeg2000_init_mel_decoder(&mel_state);
-    
+
     sample_buf = av_calloc(width * height, sizeof(int32_t));
     block_states = av_calloc((width + 2) * (height + 2), sizeof(uint8_t));
-    
+
     if (!sample_buf || !block_states) {
         ret = AVERROR(ENOMEM);
-        goto  free;
+        goto free;
     }
-    
+
     if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
 
