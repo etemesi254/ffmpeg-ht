@@ -40,8 +40,6 @@
 #define HT_SHIFT_SCAN 4
 #define HT_SHIFT_REF 3
 #define HT_SHIFT_PI 2
-#define HT_SHIFT_P 3
-
 /**
  * @brief Table 2 in clause 7.3.3
  * */
@@ -56,6 +54,13 @@ static av_always_inline uint32_t has_zero(uint32_t dword)
 static av_always_inline uint32_t has_byte(uint32_t dword, uint8_t byte)
 {
     return has_zero(dword ^ (~0UL / 255 * (byte)));
+}
+/**
+ *  Given a precomputed c, checks whether n % d == 0
+ **/
+static av_always_inline uint32_t is_divisible(uint32_t n, uint64_t c)
+{
+    return n * c <= c - 1;
 }
 
 /* Initializers */
@@ -456,16 +461,6 @@ jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, S
                                    context);
 }
 
-static av_always_inline uint32_t get_rem(uint32_t num, uint32_t divisor, uint32_t recp_freq, uint32_t recp_shift)
-{
-
-    uint32_t quotient = (((uint64_t)num * recp_freq) >> 32) >> recp_shift;
-
-    uint32_t rem = (num - (quotient * divisor));
-
-    return rem;
-}
-
 static int jpeg2000_decode_ht_cleanup(
     Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height, int32_t *sample_buf, uint8_t *block_states)
 {
@@ -504,9 +499,7 @@ static int jpeg2000_decode_ht_cleanup(
 
     int sp;
 
-    uint32_t shift;
-    uint32_t recp_freq;
-    uint32_t recp_shift;
+    uint64_t c;
 
     uint8_t *sigma;
     uint32_t *mu;
@@ -570,7 +563,6 @@ static int jpeg2000_decode_ht_cleanup(
         context += sigma_n[4 * q2 + 2] << 1; // w << 1
         context += sigma_n[4 * q2 + 3] << 2; // sw << 2
 
-        //  if res_off = [0,0]
         u[0] = 0;
         u[1] = 0;
 
@@ -589,8 +581,8 @@ static int jpeg2000_decode_ht_cleanup(
                 u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
                 u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
 
-                u[J2K_Q1] = 2 + u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
-                u[J2K_Q2] = 2 + u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] << 2);
+                u[J2K_Q1] = 2 + u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] * 4);
+                u[J2K_Q2] = 2 + u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] * 4);
 
             } else {
                 u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
@@ -610,18 +602,14 @@ static int jpeg2000_decode_ht_cleanup(
                     u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
                     u_ext[J2K_Q2] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q2], vlc_buf);
 
-                    u[J2K_Q2] = u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] << 2);
+                    u[J2K_Q2] = u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] * 4);
                 }
-                u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+                // clause 7.3.6 (3)
+                u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] * 4);
             }
 
         } else if (res_off[J2K_Q1] == 1 || res_off[J2K_Q2] == 1) {
-            uint8_t pos;
-
-            if (res_off[J2K_Q1] == 1)
-                pos = 0;
-            else
-                pos = 1;
+            uint8_t pos = res_off[J2K_Q1] == 1 ? 0 : 1;
 
             u_pfx[pos] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
 
@@ -629,7 +617,7 @@ static int jpeg2000_decode_ht_cleanup(
 
             u_ext[pos] = vlc_decode_u_extension(vlc_stream, u_sfx[pos], vlc_buf);
 
-            u[pos] = u_pfx[pos] + u_sfx[pos] + (u_ext[pos] << 2);
+            u[pos] = u_pfx[pos] + u_sfx[pos] + (u_ext[pos] * 4);
         }
         U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
         U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
@@ -669,7 +657,7 @@ static int jpeg2000_decode_ht_cleanup(
             u_pfx[J2K_Q1] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
             u_sfx[J2K_Q1] = vlc_decode_u_suffix(vlc_stream, u_pfx[J2K_Q1], vlc_buf);
             u_ext[J2K_Q1] = vlc_decode_u_extension(vlc_stream, u_sfx[J2K_Q1], vlc_buf);
-            u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] << 2);
+            u[J2K_Q1] = u_pfx[J2K_Q1] + u_sfx[J2K_Q1] + (u_ext[J2K_Q1] * 4);
         }
 
         U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
@@ -683,26 +671,16 @@ static int jpeg2000_decode_ht_cleanup(
         q++; // move to next quad pair
     }
     // initial line pair end.
+
     /*
-     * As an optimization, we can save some cycles in the inner loop if
-     * we replace modulo operations with multiplications by integer reciprocals.
-     *
-     * The technique is from the paper "Integer division using Reciprocals" by
-     * Robert Alverson.
-     *
-     * The expensive division is done outside of the loop and the inner loop
-     * implements modulus operation with multiplications and shifts.
-     *
-     * TODO:(cae) Daniel Lemire posted a faster way to calculate remainder, see
-     * https://lemire.me/blog/2019/02/08/faster-remainders-when-the-divisor-is-a-constant-beating-compilers-and-libdivide/
-     *
-     * Consider it when optimizing this.
-     */
-    shift = 31 - ff_clz(quad_width);
+     * As an optimization, we can replace modulo operations with
+     * checking if a number is divisible , since that's the only thing we need.
+     * this is paired with is_divisible.
+     * Credits to Daniel Lemire blog post: https://lemire.me/blog/2019/02/08/faster-remainders-when-the-divisor-is-a-constant-beating-compilers-and-libdivide/
+     * It's UB on zero, but we can't have a quad being zero, the spec doesn't allow, so we error out early in case that's the case.
+     * */
 
-    recp_freq = (uint32_t)(((1ull << (shift + 31)) + quad_width - 1) / quad_width);
-
-    recp_shift = shift - 1;
+    c = 1 + UINT64_C(0xffffffffffffffff) / quad_width;
 
     for (int row = 1; row < quad_height; row++) {
         while ((q - (row * quad_width)) < quad_width - 1 && q < (quad_height * quad_width)) {
@@ -711,11 +689,11 @@ static int jpeg2000_decode_ht_cleanup(
             context1 = sigma_n[4 * (q1 - quad_width) + 1];
             context1 += sigma_n[4 * (q1 - quad_width) + 3] << 2; // ne
 
-            if (get_rem(q1, quad_width, recp_freq, recp_shift)) {
+            if (!is_divisible(q1, c)) {
                 context1 |= sigma_n[4 * (q1 - quad_width) - 1];               // nw
                 context1 += (sigma_n[4 * q1 - 1] | sigma_n[4 * q1 - 2]) << 1; // sw| q
             }
-            if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q1 + 1, c))
                 context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
 
             if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
@@ -731,11 +709,11 @@ static int jpeg2000_decode_ht_cleanup(
             context2 = sigma_n[4 * (q2 - quad_width) + 1];
             context2 += sigma_n[4 * (q2 - quad_width) + 3] << 2;
 
-            if (get_rem(q2, quad_width, recp_freq, recp_shift)) {
+            if (!is_divisible(q2, c)) {
                 context2 |= sigma_n[4 * (q2 - quad_width) - 1];
                 context2 += (sigma_n[4 * q2 - 1] | sigma_n[4 * q2 - 2]) << 1;
             }
-            if (get_rem(q2 + 1, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q2 + 1, c))
                 context2 |= sigma_n[4 * (q2 - quad_width) + 5] << 2;
 
             if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
@@ -768,12 +746,7 @@ static int jpeg2000_decode_ht_cleanup(
                 u[J2K_Q2] = u_pfx[J2K_Q2] + u_sfx[J2K_Q2] + (u_ext[J2K_Q2] << 2);
 
             } else if (res_off[J2K_Q1] == 1 || res_off[J2K_Q2] == 1) {
-                uint8_t pos;
-
-                if (res_off[J2K_Q1] == 1)
-                    pos = 0;
-                else
-                    pos = 1;
+                uint8_t pos = res_off[J2K_Q1] == 1 ? 0 : 1;
 
                 u_pfx[pos] = vlc_decode_u_prefix(vlc_stream, vlc_buf);
 
@@ -809,14 +782,14 @@ static int jpeg2000_decode_ht_cleanup(
             E_nf[J2K_Q1] = 0;
             E_nf[J2K_Q2] = 0;
 
-            if (get_rem(q1, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q1, c))
                 E_nw[J2K_Q1] = E[4 * (q1 - quad_width) - 1];
-            if (get_rem(q2, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q2, c))
                 E_nw[J2K_Q2] = E[4 * (q2 - quad_width) - 1];
 
-            if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q1 + 1, c))
                 E_nf[J2K_Q1] = E[4 * (q1 - quad_width) + 5];
-            if (get_rem(q2 + 1, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q2 + 1, c))
                 E_nf[J2K_Q2] = E[4 * (q2 - quad_width) + 5];
 
             max_e[J2K_Q1] = MAX(E_nw[J2K_Q1], MAX(E_n[J2K_Q1], MAX(E_ne[J2K_Q1], E_nf[J2K_Q1])));
@@ -847,12 +820,12 @@ static int jpeg2000_decode_ht_cleanup(
             context1 = sigma_n[4 * (q1 - quad_width) + 1];         // n
             context1 += (sigma_n[4 * (q1 - quad_width) + 3] << 2); // ne
 
-            if (get_rem(q1, quad_width, recp_freq, recp_shift)) {
+            if (!is_divisible(q1, c)) {
                 context1 |= sigma_n[4 * (q1 - quad_width) - 1]; // nw
                 context1 += (sigma_n[4 * q1 - 1] | sigma_n[4 * q1 - 2])
                     << 1; // (sw| w) << 1;
             }
-            if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q1, c))
                 context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
 
             if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
@@ -890,10 +863,10 @@ static int jpeg2000_decode_ht_cleanup(
 
             E_nf[J2K_Q1] = 0;
 
-            if (get_rem(q1, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q1,c))
                 E_nw[J2K_Q1] = E[4 * (q1 - quad_width) - 1];
 
-            if (get_rem(q1 + 1, quad_width, recp_freq, recp_shift))
+            if (!is_divisible(q1+1,c))
                 E_nf[J2K_Q1] = E[4 * (q1 - quad_width) + 5];
 
             max_e[J2K_Q1] = MAX(E_nw[J2K_Q1], MAX(E_n[J2K_Q1], MAX(E_ne[J2K_Q1], E_nf[J2K_Q1])));
