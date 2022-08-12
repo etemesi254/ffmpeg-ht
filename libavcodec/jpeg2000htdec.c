@@ -863,10 +863,10 @@ static int jpeg2000_decode_ht_cleanup(
 
             E_nf[J2K_Q1] = 0;
 
-            if (!is_divisible(q1,c))
+            if (!is_divisible(q1, c))
                 E_nw[J2K_Q1] = E[4 * (q1 - quad_width) - 1];
 
-            if (!is_divisible(q1+1,c))
+            if (!is_divisible(q1 + 1, c))
                 E_nf[J2K_Q1] = E[4 * (q1 - quad_width) + 5];
 
             max_e[J2K_Q1] = MAX(E_nw[J2K_Q1], MAX(E_n[J2K_Q1], MAX(E_ne[J2K_Q1], E_nf[J2K_Q1])));
@@ -1111,8 +1111,9 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     av_assert0(width <= 1024U && height <= 1024U);
     av_assert0(width * height <= 4096);
+    av_assert0(width * height > 0);
+    
     memset(t1->data, 0, t1->stride * height * sizeof(*t1->data));
-
     memset(t1->flags, 0, t1->stride * (height + 2) * sizeof(*t1->flags));
 
     if (cblk->npasses == 0)
@@ -1142,13 +1143,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     // Dref comes after the refinement segment.
     Dref = cblk->data + Lcup;
     S_blk = p0 + cblk->zbp;
-
-    sample_buf = av_calloc(width * height, sizeof(int32_t));
-    block_states = av_calloc((width + 2) * (height + 2), sizeof(uint8_t));
-
-    if (!sample_buf || !block_states)
-        return AVERROR(ENOMEM);
-
+    
     pLSB = 30 - S_blk;
 
     Scup = (Dcup[Lcup - 1] << 4) + (Dcup[Lcup - 2] & 0x0F);
@@ -1177,7 +1172,15 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     jpeg2000_init_mag_ref(&mag_ref, Lref);
 
     jpeg2000_init_mel_decoder(&mel_state);
-
+    
+    sample_buf = av_calloc(width * height, sizeof(int32_t));
+    block_states = av_calloc((width + 2) * (height + 2), sizeof(uint8_t));
+    
+    if (!sample_buf || !block_states) {
+        ret = AVERROR(ENOMEM);
+        goto  free;
+    }
+    
     if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
 
