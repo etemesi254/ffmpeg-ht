@@ -99,8 +99,8 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
                                             const uint8_t *array)
 {
     uint64_t tmp = 0;
-    int32_t position = buffer->pos;
-    int new_bits = 32;
+    uint32_t position = buffer->pos;
+    uint32_t new_bits = 32;
 
     // TODO: (cae), confirm if we need to swap in BE systems.
     if (buffer->bits_left > 32)
@@ -117,8 +117,8 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
             tmp = array[position - 2];
         if (position >= 1)
             tmp = tmp << 8 | array[position - 1];
-        if (position >= 0)
-            tmp = tmp << 8 | array[position];
+        // position >= 0
+        tmp = tmp << 8 | array[position];
         position = 0;
     }
     // check for stuff bytes (0xff)
