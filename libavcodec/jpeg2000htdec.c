@@ -1020,6 +1020,43 @@ static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t 
     }
     return 0;
 }
+
+static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t block_height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
+{
+    StateVars mag_ref;
+    const uint16_t num_v_stripe = block_height / 4;
+    uint16_t height = 4;
+    uint16_t i_start = 0;
+    int32_t *sp;
+
+    jpeg2000_init_zero(&mag_ref);
+
+    for (int n1 = 0; n1 < num_v_stripe; n1++) {
+        for (int j = 0; j < width; j++) {
+            for (int i = i_start; i < i_start + height; i++) {
+                sp = &sample_buf[j + i * width];
+                if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) == 0) {
+                    // modify state
+                    block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_PI;
+                    *sp = jpeg2000_import_bit(&mag_ref, magref_segment, magref_length);
+                }
+            }
+        }
+        i_start += 4;
+    }
+    height = block_height % 4;
+    for (int j = 0; j < width; j++) {
+        for (int i = i_start; i < i_start + height; i++) {
+            sp = &sample_buf[j + i * width];
+            if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) == 0) {
+                // modify state
+                block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_PI;
+                *sp = jpeg2000_import_bit(&mag_ref, magref_segment, magref_length);
+            }
+        }
+    }
+    return 0;
+}
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
     uint8_t p0 = 0;    // Number of placeholder passes.
@@ -1132,6 +1169,10 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         goto free;
     if (cblk->npasses > 1) {
         if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
+            goto free;
+    }
+    if (cblk->npasses > 1) {
+        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
             goto free;
     }
 
