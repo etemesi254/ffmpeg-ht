@@ -40,16 +40,6 @@
  * */
 const static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
 
-static av_always_inline uint32_t has_zero(uint32_t dword)
-{
-    // Borrowed from the famous stanford bithacks page
-    // see https://graphics.stanford.edu/~seander/bithacks.html#ZeroInWord
-    return ~((((dword & 0x7F7F7F7F) + 0x7F7F7F7F) | dword) | 0x7F7F7F7F);
-}
-static av_always_inline uint32_t has_byte(uint32_t dword, uint8_t byte)
-{
-    return has_zero(dword ^ (~0UL / 255 * (byte)));
-}
 /**
  *  Given a precomputed c, checks whether n % d == 0
  **/
@@ -106,24 +96,25 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     if (buffer->bits_left > 32)
         return 0; // enough data, no need to pull in more bits
 
-    if (position >= 3) {
-        position -= 4;
+    if (position > 3) {
+        position = position - 4;
         memcpy(&tmp, array + position + 1, 4);
         tmp = (uint64_t)av_bswap32((uint32_t)tmp);
-    } else {
-        new_bits = (position + 1) * 8;
 
-        if (position >= 2)
-            tmp = array[position - 2];
-        if (position >= 1)
-            tmp = tmp << 8 | array[position - 1];
-        // position >= 0
-        tmp = tmp << 8 | array[position];
+    } else {
+        // TODO, This is probably broken
+        //
+        // Heck all of this is broken
+        //
+        // I'd choose to go fight unicorns over this
+        memcpy(&tmp, array + position + 1, 4);
+        tmp = (uint64_t)av_bswap32((uint32_t)tmp) & ((1 << (position * 8)) - 1);
+        new_bits = position * 8;
         position = 0;
     }
-    // check for stuff bytes (0xff)
-    if (has_byte(tmp, 0xff)) {
-        // Un-stuff
+
+    {
+        // Branchlessly unstuff  bits
 
         // load temporary byte, which preceeds the position we
         // currently at, to ensure that we can also un-stuff if the
@@ -878,7 +869,6 @@ static int jpeg2000_decode_ht_cleanup(
             // move to the next quad
             q++;
         }
-        printf("%d\n", row);
     }
     // convert to raster-scan
     for (int y = 0; y < quad_height; y++) {
@@ -1066,6 +1056,8 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
     }
     return 0;
 }
+static int COUNTER = 0;
+
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
     uint8_t p0 = 0;    // Number of placeholder passes.
@@ -1175,17 +1167,19 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         ret = AVERROR(ENOMEM);
         goto free;
     }
+    printf("Counter:%d\n",COUNTER);
+    COUNTER+=1;
 
     if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
 
-    if (cblk->npasses > 1)
-        if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
-            goto free;
-
-    if (cblk->npasses > 2)
-        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
-            goto free;
+    //    if (cblk->npasses > 1)
+    //        if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
+    //            goto free;
+    //
+    //    if (cblk->npasses > 2)
+    //        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
+    //            goto free;
 
     // Reconstruct the values.
     for (int y = 0; y < height; y++) {
