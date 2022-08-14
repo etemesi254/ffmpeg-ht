@@ -91,27 +91,29 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     uint64_t tmp = 0;
     uint32_t position = buffer->pos;
     uint32_t new_bits = 32;
+    uint32_t mask;
 
     // TODO: (cae), confirm if we need to swap in BE systems.
     if (buffer->bits_left > 32)
         return 0; // enough data, no need to pull in more bits
+    /*
+     * We are reading bits from end to start, and we need to handle them in LE.
+     * therefore, if we read bytes ABCD, we need to convert
+     * them to DCBA, but the bitstream is constructed in such a way that it is
+     * BE when reading from back to front,so we need to swap bytes
+     * but this doesn't work when position is less than 3,
+     * we end up reading bits from the MEL byte-stream which is a recipe for segfaults.
+     *
+     * So the trick is to saturate on position, in that position is either above 3 or zero,
+     * and mask depending on that, the mask is simply either 32 bits, 24 bits ,8 bits or 0 bits
+     * depending on position, with this, we don't read past the end of the buffer, and we
+     * can do it branchlessly without checking for positions
+     * */
 
-    if (position > 3) {
-        position = position - 4;
-        memcpy(&tmp, array + position + 1, 4);
-        tmp = (uint64_t)av_bswap32((uint32_t)tmp);
-
-    } else {
-        // TODO, This is probably broken
-        //
-        // Heck all of this is broken
-        //
-        // I'd choose to go fight unicorns over this
-        memcpy(&tmp, array + position + 1, 4);
-        tmp = (uint64_t)av_bswap32((uint32_t)tmp) & ((1 << (position * 8)) - 1);
-        new_bits = position * 8;
-        position = 0;
-    }
+    position = position > 3 ? position - 4 : 0;
+    mask = (1 << MIN(4, buffer->pos) * 8) - 1;
+    memcpy(&tmp, array + position + 1, 4);
+    tmp = (uint64_t)av_bswap32((uint32_t)tmp) & mask;
 
     {
         // Branchlessly unstuff  bits
@@ -1056,7 +1058,6 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
     }
     return 0;
 }
-static int COUNTER = 0;
 
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
@@ -1167,8 +1168,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         ret = AVERROR(ENOMEM);
         goto free;
     }
-    printf("Counter:%d\n",COUNTER);
-    COUNTER+=1;
 
     if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
