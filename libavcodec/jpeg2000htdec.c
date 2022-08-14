@@ -89,7 +89,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
                                             const uint8_t *array)
 {
     uint64_t tmp = 0;
-    uint32_t position = buffer->pos;
+    int32_t position = buffer->pos;
     uint32_t new_bits = 32;
     uint32_t mask;
 
@@ -102,47 +102,48 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
      * them to DCBA, but the bitstream is constructed in such a way that it is
      * BE when reading from back to front,so we need to swap bytes
      * but this doesn't work when position is less than 3,
-     * we end up reading bits from the MEL byte-stream which is a recipe for segfaults.
+     * we end up reading bits from the MEL byte-stream which is a recipe for sleepless nights.
      *
      * So the trick is to saturate on position, in that position is either above 3 or zero,
-     * and mask depending on that, the mask is simply either 32 bits, 24 bits ,8 bits or 0 bits
-     * depending on position, with this, we don't read past the end of the buffer, and we
-     * can do it branchlessly without checking for positions
+     * and mask depending on whatever was the initial position,
+     * the mask is simply either 32 bits, 24 bits ,8 bits or 0 bits
+     * depending on position, with this, we don't read past the end of the buffer,we mask
+     * bits we already read ensuring we don't read twice,
+     * and we can do it branchlessly without checking for positions.
      * */
 
-    position = position > 3 ? position - 4 : 0;
-    mask = (1 << MIN(4, buffer->pos) * 8) - 1;
-    memcpy(&tmp, array + position + 1, 4);
+    position = position == -1 ? -1 : position - 4;
+    mask = (UINT64_C(1) << (MIN(4, MAX(buffer->pos, 0))) * 8) - 1;
+    memcpy(&tmp, array + 1 + position, 4);
     tmp = (uint64_t)av_bswap32((uint32_t)tmp) & mask;
 
-    {
-        // Branchlessly unstuff  bits
+    // Branchlessly unstuff  bits
 
-        // load temporary byte, which preceeds the position we
-        // currently at, to ensure that we can also un-stuff if the
-        // stuffed bit is the bottom most bits
-        tmp <<= 8;
-        tmp |= (uint64_t) * (array + position + 1);
+    // load temporary byte, which preceeds the position we
+    // currently at, to ensure that we can also un-stuff if the
+    // stuffed bit is the bottom most bits
+    tmp <<= 8;
+    tmp |= (uint64_t) * (array + buffer->pos + 1);
 
-        if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
-            tmp &= 0x7FFFFFFFFF;
-            new_bits--;
-        }
-        if ((tmp & 0x007FFF0000) > 0x007F8F0000) {
-            tmp = (tmp & 0x007FFFFFFF) + ((tmp & 0xFF00000000) >> 1);
-            new_bits--;
-        }
-        if ((tmp & 0x00007FFF00) > 0x00007F8F00) {
-            tmp = (tmp & 0x00007FFFFF) + ((tmp & 0xFFFF000000) >> 1);
-            new_bits--;
-        }
-        if ((tmp & 0x0000007FFF) > 0x0000007F8F) {
-            tmp = (tmp & 0x0000007FFF) + ((tmp & 0xFFFFFF0000) >> 1);
-            new_bits--;
-        }
-        // remove temporary byte loaded.
-        tmp >>= 8;
+    if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
+        tmp &= 0x7FFFFFFFFF;
+        new_bits--;
     }
+    if ((tmp & 0x007FFF0000) > 0x007F8F0000) {
+        tmp = (tmp & 0x007FFFFFFF) + ((tmp & 0xFF00000000) >> 1);
+        new_bits--;
+    }
+    if ((tmp & 0x00007FFF00) > 0x00007F8F00) {
+        tmp = (tmp & 0x00007FFFFF) + ((tmp & 0xFFFF000000) >> 1);
+        new_bits--;
+    }
+    if ((tmp & 0x0000007FFF) > 0x0000007F8F) {
+        tmp = (tmp & 0x0000007FFF) + ((tmp & 0xFFFFFF0000) >> 1);
+        new_bits--;
+    }
+    // remove temporary byte loaded.
+    tmp >>= 8;
+
     // Add bits to the MSB of the bit buffer
     buffer->bit_buf |= tmp << buffer->bits_left;
     buffer->bits_left += new_bits;
@@ -869,7 +870,7 @@ static int jpeg2000_decode_ht_cleanup(
             recover_mag_sgn(mag_sgn_stream, J2K_Q1, q1, m_n, known_1, emb_pat_1, v, m,
                             E, mu_n, Dcup, Pcup, pLSB);
             // move to the next quad
-            q++;
+            q += 1;
         }
     }
     // convert to raster-scan
@@ -917,6 +918,7 @@ free:
     av_freep(&mu_n);
     return ret;
 }
+
 static av_always_inline int jpeg2000_get_state(int x1, int x2, int width, int shift_by, const uint8_t *block_states)
 {
     return (block_states[(x1 + 1) * (width + 2) + (x2 + 1)] >> shift_by) & 1;
