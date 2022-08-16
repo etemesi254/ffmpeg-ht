@@ -34,7 +34,7 @@
 #define HT_SHIFT_SIGMA 0
 #define HT_SHIFT_SCAN 4
 #define HT_SHIFT_REF 3
-#define HT_SHIFT_PI 2
+#define HT_SHIFT_REF_IND 2
 /**
  * @brief Table 2 in clause 7.3.3
  * */
@@ -104,15 +104,18 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
      * but this doesn't work when position is less than 3,
      * we end up reading bits from the MEL byte-stream which is a recipe for sleepless nights.
      *
-     * So the trick is to saturate on position, in that position is either above 3 or zero,
-     * and mask depending on whatever was the initial position,
-     * the mask is simply either 32 bits, 24 bits ,8 bits or 0 bits
+     * So the trick is to branchlessly read and mask
+     * depending on whatever was the initial position,
+     * the mask is simply either 32 bits, 24 bits ,8 bits or 0 bits.
      * depending on position, with this, we don't read past the end of the buffer,we mask
-     * bits we already read ensuring we don't read twice,
+     * bits we already read ensuring we don't read twice.
      * and we can do it branchlessly without checking for positions.
+     *
+     * We need to watch out for negative shift values which are UB in C hence the
+     * MAX declarative.
      * */
 
-    position = position == -1 ? -1 : position - 4;
+    position -= 4;
     mask = (UINT64_C(1) << (MIN(4, MAX(buffer->pos, 0))) * 8) - 1;
     memcpy(&tmp, array + 1 + position, 4);
     tmp = (uint64_t)av_bswap32((uint32_t)tmp) & mask;
@@ -123,7 +126,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     // currently at, to ensure that we can also un-stuff if the
     // stuffed bit is the bottom most bits
     tmp <<= 8;
-    tmp |= (uint64_t) * (array + buffer->pos + 1);
+    memcpy(&tmp, array + buffer->pos + 1, 1);
 
     if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
         tmp &= 0x7FFFFFFFFF;
@@ -147,7 +150,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     // Add bits to the MSB of the bit buffer
     buffer->bit_buf |= tmp << buffer->bits_left;
     buffer->bits_left += new_bits;
-    buffer->pos = position;
+    buffer->pos = MAX(-1, position);
     return 0;
 }
 
@@ -814,7 +817,7 @@ static int jpeg2000_decode_ht_cleanup(
                 context1 += (sigma_n[4 * q1 - 1] | sigma_n[4 * q1 - 2])
                     << 1; // (sw| w) << 1;
             }
-            if (!is_divisible(q1, c))
+            if (!is_divisible(q1 + 1, c))
                 context1 |= sigma_n[4 * (q1 - quad_width) + 5] << 2;
 
             if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
@@ -962,14 +965,14 @@ static int jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s,
     for (int j = j_s; j < j_s + width; j++) {
         mbr_info = 0;
         for (int i = i_s; i < i_s + height; i++) {
-            sp = &sample_buf[j + (i * width)];
+            sp = &sample_buf[j + (i * (stride - 2))];
             mbr = 0;
             causal_cond = i != (i_s + height - 1);
             if (block_states[(i + 1) * (width + 2) + (j + 1)] == 0)
-                jpeg2000_calc_mbr(&mbr, i, j, mbr_info & 0x1EF, causal_cond, block_states, width);
+                jpeg2000_calc_mbr(&mbr, i, j, mbr_info & 0x1EF, causal_cond, block_states, stride);
             mbr_info >>= 3;
             if (mbr != 0) {
-                block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_PI;
+                block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_REF_IND;
                 bit = jpeg2000_import_bit(sig_prop, magref_segment, magref_length);
                 block_states[(i + 1) * (width + 2) + j + 1] |= bit << HT_SHIFT_REF;
                 *sp |= bit << pLSB;
@@ -996,6 +999,7 @@ static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t 
     StateVars sp_dec;
     const uint16_t num_v_stripe = height / 4;
     const uint16_t num_h_stripe = width / 4;
+    int b_width = 4;
     int last_width;
     int ret;
     uint16_t i = 0, j = 0;
@@ -1005,13 +1009,13 @@ static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t 
     for (int n1 = 0; n1 < num_v_stripe; n1++) {
         j = 0;
         for (int n2 = 0; n2 < num_h_stripe; n2++) {
-            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, width, height, width + 2, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
+            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, height, width + 2, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
                 return ret;
             j += 4;
         }
         last_width = width % 4;
         if (last_width) {
-            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, width, height, width + 2, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
+            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, height, width + 2, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
                 return ret;
         }
         i += 4;
@@ -1030,7 +1034,7 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
     uint16_t i_start = 0;
     int32_t *sp;
 
-    jpeg2000_init_zero(&mag_ref);
+    jpeg2000_init_mag_ref(&mag_ref, magref_length);
 
     for (int n1 = 0; n1 < num_v_stripe; n1++) {
         for (int j = 0; j < width; j++) {
@@ -1040,8 +1044,8 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
                 sp = &sample_buf[j + i * width];
                 if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) == 0) {
                     // modify state
-                    block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_PI;
-                    *sp = jpeg2000_import_bit(&mag_ref, magref_segment, magref_length);
+                    block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_REF_IND;
+                    *sp |= jpeg2000_import_bit(&mag_ref, magref_segment, magref_length) << pLSB;
                 }
             }
         }
@@ -1053,8 +1057,8 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
             sp = &sample_buf[j + i * width];
             if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) == 0) {
                 // modify state
-                block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_PI;
-                *sp = jpeg2000_import_bit(&mag_ref, magref_segment, magref_length);
+                block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_REF_IND;
+                *sp |= jpeg2000_import_bit(&mag_ref, magref_segment, magref_length) << pLSB;
             }
         }
     }
@@ -1174,13 +1178,13 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
 
-    //    if (cblk->npasses > 1)
-    //        if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
-    //            goto free;
-    //
-    //    if (cblk->npasses > 2)
-    //        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
-    //            goto free;
+    if (cblk->npasses > 1)
+        if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
+            goto free;
+
+    if (cblk->npasses > 2)
+        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
+            goto free;
 
     // Reconstruct the values.
     for (int y = 0; y < height; y++) {
