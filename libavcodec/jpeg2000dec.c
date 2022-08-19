@@ -1161,8 +1161,9 @@ static int jpeg2000_decode_packet(Jpeg2000DecoderContext *s, Jpeg2000DecTile *ti
                         break;
                     }
                 }
-                if (newpasses > 1) {
+                if (newpasses > 1 && s->is_htj2k) {
                     // retrieve pass lengths for each pass
+                    // for htj2k images
                     int extra_bit = newpasses > 2 ? 1 : 0;
                     if ((ret = get_bits(s, llen + 3)) < 0)
                         return ret;
@@ -1961,7 +1962,7 @@ static inline void tile_codeblocks(Jpeg2000DecoderContext *s, Jpeg2000DecTile *t
                                              cblk->coord[0][1] - cblk->coord[0][0],
                                              cblk->coord[1][1] - cblk->coord[1][0],
                                              bandpos, comp->roi_shift);
-                              else
+                        else
                           ret = decode_cblk(s, codsty, &t1, cblk,
                                     cblk->coord[0][1] - cblk->coord[0][0],
                                     cblk->coord[1][1] - cblk->coord[1][0],
