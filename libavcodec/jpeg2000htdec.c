@@ -96,6 +96,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     // TODO: (cae), confirm if we need to swap in BE systems.
     if (buffer->bits_left > 32)
         return 0; // enough data, no need to pull in more bits
+
     /*
      * We are reading bits from end to start, and we need to handle them in LE.
      * therefore, if we read bytes ABCD, we need to convert
@@ -107,7 +108,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
      * So the trick is to branchlessly read and mask
      * depending on whatever was the initial position,
      * the mask is simply either 32 bits, 24 bits ,8 bits or 0 bits.
-     * depending on position, with this, we don't read past the end of the buffer,we mask
+     * depending on how many bytes are available, with this, we don't read past the end of the buffer,we mask
      * bits we already read ensuring we don't read twice.
      * and we can do it branchlessly without checking for positions.
      *
@@ -181,7 +182,10 @@ static void jpeg2000_bitbuf_refill_bytewise(StateVars *buffer,
 static av_always_inline void jpeg2000_bitbuf_drop_bits_lsb(StateVars *buf,
                                                            uint8_t nbits)
 {
-    av_assert0(buf->bits_left >= nbits);
+    if (buf->bits_left < nbits) {
+        av_log(NULL, AV_LOG_ERROR, "Invalid bit read of %d, bits in buffer are %d", nbits, buf->bits_left);
+        av_assert0(0);
+    }
     buf->bit_buf >>= nbits;
     buf->bits_left -= nbits;
 }
@@ -342,12 +346,9 @@ static av_always_inline uint8_t vlc_decode_u_extension(
 {
     // clause 7.3.6
     // procedure decodeUExtension.
-
-    uint8_t bits;
     if (suffix < 28)
         return 0;
-    bits = jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 4, refill_array);
-    return bits;
+    return jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 4, refill_array);
 }
 
 /* Magnitude and Sign decode procedures*/
@@ -926,6 +927,10 @@ static av_always_inline int jpeg2000_get_state(int x1, int x2, int width, int sh
 {
     return (block_states[(x1 + 1) * (width + 2) + (x2 + 1)] >> shift_by) & 1;
 }
+static av_always_inline void jpeg2000_modify_state(int x1, int x2, int width, int value, uint8_t *block_states)
+{
+    block_states[(x1 + 1) * (width + 2) + (x2 + 1)] |= value;
+}
 static void jpeg2000_calc_mbr(uint8_t *mbr, const uint16_t i, const uint16_t j, const uint32_t mbr_info, uint8_t causal_cond, uint8_t *block_states, int width)
 {
 
@@ -968,21 +973,21 @@ static int jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s,
             sp = &sample_buf[j + (i * (stride - 2))];
             mbr = 0;
             causal_cond = i != (i_s + height - 1);
-            if (block_states[(i + 1) * (width + 2) + (j + 1)] == 0)
+            if (jpeg2000_get_state(i, j, stride - 2, HT_SHIFT_SIGMA, block_states) == 0)
                 jpeg2000_calc_mbr(&mbr, i, j, mbr_info & 0x1EF, causal_cond, block_states, stride);
             mbr_info >>= 3;
             if (mbr != 0) {
-                block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_REF_IND;
+                jpeg2000_modify_state(i, j, stride - 2, 1 << HT_SHIFT_REF_IND, block_states);
                 bit = jpeg2000_import_bit(sig_prop, magref_segment, magref_length);
-                block_states[(i + 1) * (width + 2) + j + 1] |= bit << HT_SHIFT_REF;
+                jpeg2000_modify_state(i, j, stride - 2, 1 << HT_SHIFT_REF, block_states);
                 *sp |= bit << pLSB;
             }
-            block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_SCAN;
+            jpeg2000_modify_state(i, j, stride - 2, 1 << HT_SHIFT_REF_IND, block_states);
         }
     }
     for (int j = 0; j < j_s + width; j++) {
         for (int i = 0; i < i_s + height; i++) {
-            sp = &sample_buf[j + i * width];
+            sp = &sample_buf[j + (i * (stride-2))];
             if ((*sp & (1 << pLSB)) != 0) {
                 *sp = (*sp & 0x7FFFFFFF) | (jpeg2000_import_bit(sig_prop, magref_segment, magref_length) << 31);
             }
@@ -1000,6 +1005,8 @@ static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t 
     const uint16_t num_v_stripe = height / 4;
     const uint16_t num_h_stripe = width / 4;
     int b_width = 4;
+    int b_height = 4;
+    int stride = width + 2;
     int last_width;
     int ret;
     uint16_t i = 0, j = 0;
@@ -1009,17 +1016,31 @@ static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t 
     for (int n1 = 0; n1 < num_v_stripe; n1++) {
         j = 0;
         for (int n2 = 0; n2 < num_h_stripe; n2++) {
-            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, height, width + 2, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
+            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
                 return ret;
             j += 4;
         }
         last_width = width % 4;
         if (last_width) {
-            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, height, width + 2, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
+            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
                 return ret;
         }
         i += 4;
     }
+    // decode remaining height stripes
+    b_height = height % 4;
+    j = 0;
+    for (int n2 = 0; n2 < num_h_stripe; n2++) {
+        if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
+            return ret;
+        j += 4;
+    }
+    last_width = width % 4;
+    if (last_width) {
+        if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
+            return ret;
+    }
+    i += 4;
     return 0;
 }
 
@@ -1043,8 +1064,7 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
                 // see figure 7.
                 sp = &sample_buf[j + i * width];
                 if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) == 0) {
-                    // modify state
-                    block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_REF_IND;
+                    jpeg2000_modify_state(i, j, width, 1 << HT_SHIFT_REF_IND, block_states);
                     *sp |= jpeg2000_import_bit(&mag_ref, magref_segment, magref_length) << pLSB;
                 }
             }
@@ -1162,7 +1182,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     jpeg2000_init_mel(&mel, Pcup);
     // Variable Length coding.
     jpeg2000_init_vlc(&vlc, Lcup, Pcup, Dcup);
-
+    Lref = cblk->pass_lengths[1];
     jpeg2000_init_mag_ref(&mag_ref, Lref);
 
     jpeg2000_init_mel_decoder(&mel_state);
@@ -1179,11 +1199,11 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         goto free;
 
     if (cblk->npasses > 1)
-        if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
+        if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states)) < 0)
             goto free;
 
     if (cblk->npasses > 2)
-        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB + 1, sample_buf, block_states)) < 0)
+        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states)) < 0)
             goto free;
 
     // Reconstruct the values.
