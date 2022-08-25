@@ -24,9 +24,6 @@
 
 #include "bytestream.h"
 
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
-#define MAX(a, b) (((a) > (b)) ? (a) : (b))
-
 #define J2K_Q1 0
 
 #define J2K_Q2 1
@@ -117,7 +114,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
      * */
 
     position -= 4;
-    mask = (UINT64_C(1) << (MIN(4, MAX(buffer->pos, 0))) * 8) - 1;
+    mask = (UINT64_C(1) << (FFMIN(4, FFMAX(buffer->pos, 0))) * 8) - 1;
     memcpy(&tmp, array + 1 + position, 4);
     tmp = (uint64_t)av_bswap32((uint32_t)tmp) & mask;
 
@@ -151,7 +148,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     // Add bits to the MSB of the bit buffer
     buffer->bit_buf |= tmp << buffer->bits_left;
     buffer->bits_left += new_bits;
-    buffer->pos = MAX(-1, position);
+    buffer->pos = FFMAX(-1, position);
     return 0;
 }
 
@@ -413,7 +410,7 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state,
         bit = jpeg2000_import_bit(mel_stream, Dcup, Lcup);
         if (bit == 1) {
             mel_state->run = 1 << eval;
-            mel_state->k = MIN(12, mel_state->k + 1);
+            mel_state->k = FFMIN(12, mel_state->k + 1);
         } else {
             mel_state->run = 0;
             while (eval > 0) {
@@ -421,7 +418,7 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state,
                 mel_state->run = (2 * (mel_state->run)) + bit;
                 eval -= 1;
             }
-            mel_state->k = MAX(0, mel_state->k - 1);
+            mel_state->k = FFMAX(0, mel_state->k - 1);
             mel_state->one = 1;
         }
     }
@@ -785,11 +782,11 @@ static int jpeg2000_decode_ht_cleanup(
             if (!is_divisible(q2 + 1, c))
                 E_nf[J2K_Q2] = E[4 * (q2 - quad_width) + 5];
 
-            max_e[J2K_Q1] = MAX(E_nw[J2K_Q1], MAX(E_n[J2K_Q1], MAX(E_ne[J2K_Q1], E_nf[J2K_Q1])));
-            max_e[J2K_Q2] = MAX(E_nw[J2K_Q2], MAX(E_n[J2K_Q2], MAX(E_ne[J2K_Q2], E_nf[J2K_Q2])));
+            max_e[J2K_Q1] = FFMAX(E_nw[J2K_Q1], FFMAX3(E_n[J2K_Q1], E_ne[J2K_Q1], E_nf[J2K_Q1]));
+            max_e[J2K_Q2] = FFMAX(E_nw[J2K_Q2], FFMAX3(E_n[J2K_Q2], E_ne[J2K_Q2], E_nf[J2K_Q2]));
 
-            kappa[J2K_Q1] = MAX(1, gamma[J2K_Q1] * (max_e[J2K_Q1] - 1));
-            kappa[J2K_Q2] = MAX(1, gamma[J2K_Q2] * (max_e[J2K_Q2] - 1));
+            kappa[J2K_Q1] = FFMAX(1, gamma[J2K_Q1] * (max_e[J2K_Q1] - 1));
+            kappa[J2K_Q2] = FFMAX(1, gamma[J2K_Q2] * (max_e[J2K_Q2] - 1));
 
             U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
             U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
@@ -862,9 +859,9 @@ static int jpeg2000_decode_ht_cleanup(
             if (!is_divisible(q1 + 1, c))
                 E_nf[J2K_Q1] = E[4 * (q1 - quad_width) + 5];
 
-            max_e[J2K_Q1] = MAX(E_nw[J2K_Q1], MAX(E_n[J2K_Q1], MAX(E_ne[J2K_Q1], E_nf[J2K_Q1])));
+            max_e[J2K_Q1] = FFMAX(E_nw[J2K_Q1], FFMAX3(E_n[J2K_Q1], E_ne[J2K_Q1], E_nf[J2K_Q1]));
 
-            kappa[J2K_Q1] = MAX(1, gamma[J2K_Q1] * (max_e[J2K_Q1] - 1));
+            kappa[J2K_Q1] = FFMAX(1, gamma[J2K_Q1] * (max_e[J2K_Q1] - 1));
 
             U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
 
@@ -959,7 +956,7 @@ static void jpeg2000_calc_mbr(uint8_t *mbr, const uint16_t i, const uint16_t j, 
 
     *mbr |= local_mbr;
 }
-static int jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s, int width, int height, int stride, int pLSB, int32_t *sample_buf, uint8_t *block_states, uint8_t *magref_segment, uint32_t magref_length)
+static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s, int width, int height, int stride, int pLSB, int32_t *sample_buf, uint8_t *block_states, uint8_t *magref_segment, uint32_t magref_length)
 {
     int32_t *sp;
     uint8_t causal_cond = 0;
@@ -993,10 +990,9 @@ static int jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s,
             }
         }
     }
-    return 0;
 }
 
-static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
+static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
 {
     // Described in clause 7.4
     // procedure: decodeSigPropMag
@@ -1016,32 +1012,25 @@ static int jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t 
     for (int n1 = 0; n1 < num_v_stripe; n1++) {
         j = 0;
         for (int n2 = 0; n2 < num_h_stripe; n2++) {
-            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
-                return ret;
+            jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
             j += 4;
         }
         last_width = width % 4;
-        if (last_width) {
-            if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
-                return ret;
-        }
+        if (last_width)
+            jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
         i += 4;
     }
     // decode remaining height stripes
     b_height = height % 4;
     j = 0;
     for (int n2 = 0; n2 < num_h_stripe; n2++) {
-        if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
-            return ret;
+        jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
         j += 4;
     }
     last_width = width % 4;
-    if (last_width) {
-        if ((ret = jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length)) < 0)
-            return ret;
-    }
-    i += 4;
-    return 0;
+    if (last_width)
+         jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
+
 }
 
 static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t block_height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
@@ -1089,7 +1078,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 {
     uint8_t p0 = 0;    // Number of placeholder passes.
     uint32_t Lcup;     // Length of HT cleanup segment.
-    uint32_t Lref = 0; // Length of Refinement segment.
+    uint32_t Lref;     // Length of Refinement segment.
     uint32_t Scup;     // HT cleanup segment suffix length.
     uint32_t Pcup;     // HT cleanup segment prefix length.
 
@@ -1107,7 +1096,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     StateVars mel;      // Adaptive run-length coding
     StateVars vlc;      // Variable Length coding
     StateVars sig_prop; // Significance propagation
-    StateVars mag_ref;  // Magnitude and refinement.
 
     MelDecoderState mel_state;
 
@@ -1148,6 +1136,8 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         return 0;
 
     Lcup = cblk->pass_lengths[0];
+    Lref = cblk->pass_lengths[1];
+
     if (Lcup < 2) {
         av_log(s->avctx, AV_LOG_ERROR,
                "Cleanup pass length must be at least 2 bytes in length\n");
@@ -1182,8 +1172,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     jpeg2000_init_mel(&mel, Pcup);
     // Variable Length coding.
     jpeg2000_init_vlc(&vlc, Lcup, Pcup, Dcup);
-    Lref = cblk->pass_lengths[1];
-    jpeg2000_init_mag_ref(&mag_ref, Lref);
 
     jpeg2000_init_mel_decoder(&mel_state);
 
