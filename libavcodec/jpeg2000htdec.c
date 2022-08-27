@@ -1004,7 +1004,6 @@ static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t
     int b_height = 4;
     int stride = width + 2;
     int last_width;
-    int ret;
     uint16_t i = 0, j = 0;
 
     jpeg2000_init_zero(&sp_dec);
@@ -1187,8 +1186,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         goto free;
 
     if (cblk->npasses > 1)
-        if ((ret = jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states)) < 0)
-            goto free;
+        jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states);
 
     if (cblk->npasses > 2)
         if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states)) < 0)
