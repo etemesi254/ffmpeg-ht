@@ -431,6 +431,27 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state,
     }
 }
 
+static int jpeg2000_import_magref_bit(StateVars *stream, const uint8_t *array, uint32_t length)
+{
+    int val;
+    // TODO (cae): Figure out how to use the other refill method here.
+    if (stream->bits == 0) {
+        stream->tmp = 0;
+        if (stream->pos >= 0) {
+            stream->tmp = array[length + stream->pos];
+            stream->pos -= 1;
+        }
+        stream->bits = 8;
+        if (stream->last > 0x8F && (stream->tmp & 0x7F) == 0x7F) {
+            stream->bits = 7;
+        }
+        stream->last = stream->tmp;
+    }
+    stream->bits -= 1;
+    val = stream->tmp & 1;
+    stream->tmp >>= 1;
+    return val;
+}
 /* Signal EMB decode */
 static int
 jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t context, uint32_t Lcup, uint32_t Pcup)
@@ -979,12 +1000,12 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
                 jpeg2000_modify_state(i, j, stride - 2, 1 << HT_SHIFT_REF, block_states);
                 *sp |= bit << pLSB;
             }
-            jpeg2000_modify_state(i, j, stride - 2, 1 << HT_SHIFT_REF_IND, block_states);
+            jpeg2000_modify_state(i, j, stride - 2, 1 << HT_SHIFT_SCAN, block_states);
         }
     }
     for (int j = 0; j < j_s + width; j++) {
         for (int i = 0; i < i_s + height; i++) {
-            sp = &sample_buf[j + (i * (stride-2))];
+            sp = &sample_buf[j + (i * (stride - 2))];
             if ((*sp & (1 << pLSB)) != 0) {
                 *sp = (*sp & 0x7FFFFFFF) | (jpeg2000_import_bit(sig_prop, magref_segment, magref_length) << 31);
             }
@@ -1028,8 +1049,7 @@ static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t
     }
     last_width = width % 4;
     if (last_width)
-         jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
-
+        jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
 }
 
 static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t block_height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
@@ -1051,9 +1071,9 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
                 // we move column wise, going from one quad to another
                 // see figure 7.
                 sp = &sample_buf[j + i * width];
-                if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) == 0) {
+                if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) != 0) {
                     jpeg2000_modify_state(i, j, width, 1 << HT_SHIFT_REF_IND, block_states);
-                    *sp |= jpeg2000_import_bit(&mag_ref, magref_segment, magref_length) << pLSB;
+                    *sp |= jpeg2000_import_magref_bit(&mag_ref, magref_segment, magref_length) << pLSB;
                 }
             }
         }
@@ -1063,10 +1083,9 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
     for (int j = 0; j < width; j++) {
         for (int i = i_start; i < i_start + height; i++) {
             sp = &sample_buf[j + i * width];
-            if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) == 0) {
-                // modify state
-                block_states[(i + 1) * (width + 2) + j + 1] |= 1 << HT_SHIFT_REF_IND;
-                *sp |= jpeg2000_import_bit(&mag_ref, magref_segment, magref_length) << pLSB;
+            if (jpeg2000_get_state(i, j, width, HT_SHIFT_SIGMA, block_states) != 0) {
+                jpeg2000_modify_state(i, j, width, 1 << HT_SHIFT_REF_IND, block_states);
+                *sp |= jpeg2000_import_magref_bit(&mag_ref, magref_segment, magref_length) << pLSB;
             }
         }
     }
@@ -1075,11 +1094,11 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
 
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
 {
-    uint8_t p0 = 0;    // Number of placeholder passes.
-    uint32_t Lcup;     // Length of HT cleanup segment.
-    uint32_t Lref;     // Length of Refinement segment.
-    uint32_t Scup;     // HT cleanup segment suffix length.
-    uint32_t Pcup;     // HT cleanup segment prefix length.
+    uint8_t p0 = 0; // Number of placeholder passes.
+    uint32_t Lcup;  // Length of HT cleanup segment.
+    uint32_t Lref;  // Length of Refinement segment.
+    uint32_t Scup;  // HT cleanup segment suffix length.
+    uint32_t Pcup;  // HT cleanup segment prefix length.
 
     uint8_t S_blk; // Number of skipped magnitude bitplanes;
     uint8_t pLSB;
@@ -1109,7 +1128,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     // TODO: Stop assuming
     int32_t M_b = 8;
-
     av_assert0(width <= 1024U && height <= 1024U);
     av_assert0(width * height <= 4096);
     av_assert0(width * height > 0);
@@ -1181,7 +1199,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         ret = AVERROR(ENOMEM);
         goto free;
     }
-
     if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
 
@@ -1191,23 +1208,47 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     if (cblk->npasses > 2)
         if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states)) < 0)
             goto free;
+    if (codsty->transform) {
+        // Reconstruct the values.
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                n = x + (y * t1->stride);
+                val = sample_buf[x + (y * width)];
+                sign = val & 0x80000000;
+                val &= 0x7fffffff;
+                N_b = M_b;
+                offset = M_b > N_b ? M_b - N_b : 0;
+                r_val = 1 << (pLSB - 1 + offset);
+                if (val != 0 && N_b < M_b)
+                    val |= r_val;
+                // convert sign-magnitude to twos complement form
+                if (sign)
+                    val = -val;
+                t1->data[n] = val >> (pLSB - 1);
+            }
+        }
+    } else {
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                n = x + (y * t1->stride);
+                val = sample_buf[x + (y * width)];
+                sign = val & 0x80000000;
+                val &= 0x7fffffff;
+                if (roi_shift) {
+                    N_b = M_b;
+                } else {
+                    N_b = S_blk + 1 + z_blk;
+                }
+                offset = M_b > N_b ? M_b - N_b : 0;
 
-    // Reconstruct the values.
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            n = x + (y * t1->stride);
-            val = sample_buf[x + (y * width)];
-            sign = val & 0x80000000;
-            val &= 0x7fffffff;
-            N_b = M_b;
-            offset = M_b > N_b ? M_b - N_b : 0;
-            r_val = 1 << (pLSB - 1 + offset);
-            if (val != 0 && N_b < M_b)
-                val |= r_val;
-            // convert sign-magnitude to twos complement form
-            if (sign)
-                val = -val;
-            t1->data[n] = val >> (pLSB - 1);
+                r_val = 1 << (pLSB - 1 + offset);
+                if (val != 0)
+                    val |= r_val;
+                if (sign)
+                    val = -val;
+
+                t1->data[n] = val >> (pLSB - 1);
+            }
         }
     }
 free:
