@@ -1107,7 +1107,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     uint8_t *block_states;
 
     // Post-processing
-    int32_t n, val, sign, r_val, N_b, offset, z_n;
+    int32_t n, val, sign;
 
     int32_t M_b = magp;
     av_assert0(width <= 1024U && height <= 1024U);
@@ -1121,7 +1121,6 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         return 0;
 
     if (cblk->npasses > 3)
-        // TODO:(cae) Add correct support for this
         // Currently use this as a dummy but should be fixed soon
         p0 = 0;
     else if (cblk->length == 0)
