@@ -118,7 +118,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     position -= 4;
     mask = (UINT64_C(1) << (FFMIN(4, FFMAX(buffer->pos, 0))) * 8) - 1;
     memcpy(&tmp, array + 1 + position, 4);
-    tmp = (uint64_t)av_bswap32((uint32_t)tmp) & mask;
+    tmp = (uint64_t)av_be2ne32((uint32_t)tmp) & mask;
 
     // Branchlessly unstuff  bits
 
@@ -126,7 +126,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     // currently at, to ensure that we can also un-stuff if the
     // stuffed bit is the bottom most bits
     tmp <<= 8;
-    memcpy(&tmp, array + buffer->pos + 1, 1);
+    tmp |= array[buffer->pos + 1];
 
     if ((tmp & 0x7FFF000000) > 0x7F8F000000) {
         tmp &= 0x7FFFFFFFFF;
@@ -459,7 +459,7 @@ jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, S
 
 static av_always_inline int jpeg2000_get_state(int x1, int x2, int width, int shift_by, const uint8_t *block_states)
 {
-    return (block_states[x1  * (width + 2) + x2 ] >> shift_by) & 1;
+    return (block_states[x1 * (width + 2) + x2] >> shift_by) & 1;
 }
 static av_always_inline void jpeg2000_modify_state(int x1, int x2, int width, int value, uint8_t *block_states)
 {
@@ -977,7 +977,7 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
             mbr = 0;
             causal_cond = i != (i_s + height - 1);
             if (jpeg2000_get_state(i, j, stride - 2, HT_SHIFT_SIGMA, block_states) == 0)
-                jpeg2000_calc_mbr(&mbr, i, j, mbr_info & 0x1EF, causal_cond, block_states, stride);
+                jpeg2000_calc_mbr(&mbr, i, j, mbr_info & 0x1EF, causal_cond, block_states, stride - 2);
             mbr_info >>= 3;
             if (mbr != 0) {
                 jpeg2000_modify_state(i, j, stride - 2, 1 << HT_SHIFT_REF_IND, block_states);
