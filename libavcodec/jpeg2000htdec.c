@@ -69,6 +69,8 @@ static void jpeg2000_init_mag_ref(StateVars *s, uint32_t Lref)
     s->bits = 0;
     s->last = 0xFF;
     s->tmp = 0;
+    s->bits_left = 0;
+    s->bit_buf = 0;
 }
 
 static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
@@ -431,7 +433,7 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state,
     }
 }
 
-static av_always_inline int  jpeg2000_import_magref_bit(StateVars *stream, const uint8_t *array, uint32_t length)
+static av_always_inline int jpeg2000_import_magref_bit(StateVars *stream, const uint8_t *array, uint32_t length)
 {
     return jpeg2000_bitbuf_get_bits_lsb(stream, 1, array);
 }
@@ -453,6 +455,15 @@ jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, S
     return jpeg2000_decode_ctx_vlc(s, vlc_stream, vlc_table, Dcup, sig_pat,
                                    res_off, emb_pat_k, emb_pat_1, pos, Pcup,
                                    context);
+}
+
+static av_always_inline int jpeg2000_get_state(int x1, int x2, int width, int shift_by, const uint8_t *block_states)
+{
+    return (block_states[x1  * (width + 2) + x2 ] >> shift_by) & 1;
+}
+static av_always_inline void jpeg2000_modify_state(int x1, int x2, int width, int value, uint8_t *block_states)
+{
+    block_states[x1 * (width + 2) + x2] |= value;
 }
 
 static int jpeg2000_decode_ht_cleanup(
@@ -886,15 +897,14 @@ static int jpeg2000_decode_ht_cleanup(
 
             // set sample
             sample_buf[j2 + (j1 * width)] = (int32_t)*mu;
-            // modify state
-            block_states[(j1 + 1) * (width + 2) + (j2 + 1)] |= *sigma;
+            jpeg2000_modify_state(j1, j2, width, *sigma, block_states);
 
             sigma += 1;
             mu += 1;
 
             if (y != quad_height - 1 || is_border_y == 0) {
                 sample_buf[j2 + ((j1 + 1) * width)] = (int32_t)*mu;
-                block_states[(j1 + 2) * (width + 2) + (j2 + 1)] |= *sigma;
+                jpeg2000_modify_state(j1 + 1, j2, width, *sigma, block_states);
             }
 
             sigma += 1;
@@ -902,7 +912,7 @@ static int jpeg2000_decode_ht_cleanup(
 
             if (x != quad_width - 1 || is_border_x == 0) {
                 sample_buf[(j2 + 1) + (j1 * width)] = (int32_t)*mu;
-                block_states[(j1 + 1) * (width + 2) + (j2 + 2)] |= *sigma;
+                jpeg2000_modify_state(j1, j2 + 1, width, *sigma, block_states);
             }
 
             sigma += 1;
@@ -910,7 +920,7 @@ static int jpeg2000_decode_ht_cleanup(
 
             if ((y != quad_height - 1 || is_border_y == 0) && (x != quad_width - 1 || is_border_x == 0)) {
                 sample_buf[(j2 + 1) + (j1 + 1) * width] = (int32_t)*mu;
-                block_states[(j1 + 2) * (width + 2) + (j2 + 2)] |= *sigma;
+                jpeg2000_modify_state(j1 + 1, j2 + 1, width, *sigma, block_states);
             }
             sigma += 1;
             mu += 1;
@@ -924,39 +934,31 @@ free:
     return ret;
 }
 
-static av_always_inline int jpeg2000_get_state(int x1, int x2, int width, int shift_by, const uint8_t *block_states)
-{
-    return (block_states[(x1 + 1) * (width + 2) + (x2 + 1)] >> shift_by) & 1;
-}
-static av_always_inline void jpeg2000_modify_state(int x1, int x2, int width, int value, uint8_t *block_states)
-{
-    block_states[(x1 + 1) * (width + 2) + (x2 + 1)] |= value;
-}
 static void jpeg2000_calc_mbr(uint8_t *mbr, const uint16_t i, const uint16_t j, const uint32_t mbr_info, uint8_t causal_cond, uint8_t *block_states, int width)
 {
 
     int local_mbr = 0;
     local_mbr |= jpeg2000_get_state(i - 1, j - 1, width, HT_SHIFT_SIGMA, block_states);
-    local_mbr |= jpeg2000_get_state(i - 1, j, width, HT_SHIFT_SIGMA, block_states);
+    local_mbr |= jpeg2000_get_state(i - 1, j + 0, width, HT_SHIFT_SIGMA, block_states);
     local_mbr |= jpeg2000_get_state(i - 1, j + 1, width, HT_SHIFT_SIGMA, block_states);
 
-    local_mbr |= jpeg2000_get_state(i, j - 1, width, HT_SHIFT_SIGMA, block_states);
-    local_mbr |= jpeg2000_get_state(i, j + 1, width, HT_SHIFT_SIGMA, block_states);
+    local_mbr |= jpeg2000_get_state(i + 0, j - 1, width, HT_SHIFT_SIGMA, block_states);
+    local_mbr |= jpeg2000_get_state(i + 0, j + 1, width, HT_SHIFT_SIGMA, block_states);
 
     local_mbr |= jpeg2000_get_state(i + 1, j - 1, width, HT_SHIFT_SIGMA, block_states) * causal_cond;
-    local_mbr |= jpeg2000_get_state(i + 1, j, width, HT_SHIFT_SIGMA, block_states) * causal_cond;
+    local_mbr |= jpeg2000_get_state(i + 1, j + 0, width, HT_SHIFT_SIGMA, block_states) * causal_cond;
     local_mbr |= jpeg2000_get_state(i + 1, j + 1, width, HT_SHIFT_SIGMA, block_states) * causal_cond;
 
     local_mbr |= jpeg2000_get_state(i - 1, j - 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i - 1, j - 1, width, HT_SHIFT_SCAN, block_states);
-    local_mbr |= jpeg2000_get_state(i - 1, j, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i, j - 1, width, HT_SHIFT_SCAN, block_states);
+    local_mbr |= jpeg2000_get_state(i - 1, j + 0, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i - 1, j - 1, width, HT_SHIFT_SCAN, block_states);
     local_mbr |= jpeg2000_get_state(i - 1, j + 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i - 1, j + 1, width, HT_SHIFT_SCAN, block_states);
 
-    local_mbr |= jpeg2000_get_state(i, j - 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i, j - 1, width, HT_SHIFT_SCAN, block_states);
-    local_mbr |= jpeg2000_get_state(i - 1, j + 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i, j + 1, width, HT_SHIFT_SCAN, block_states);
+    local_mbr |= jpeg2000_get_state(i + 0, j - 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i + 0, j - 1, width, HT_SHIFT_SCAN, block_states);
+    local_mbr |= jpeg2000_get_state(i + 0, j + 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i + 0, j + 1, width, HT_SHIFT_SCAN, block_states);
 
-    local_mbr |= jpeg2000_get_state(i + 1, j - 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i - 1, j - 1, width, HT_SHIFT_SCAN, block_states) * causal_cond;
-    local_mbr |= jpeg2000_get_state(i + 1, j, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i, j - 1, width, HT_SHIFT_SCAN, block_states) * causal_cond;
-    local_mbr |= jpeg2000_get_state(i + 1, j + 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i - 1, j + 1, width, HT_SHIFT_SCAN, block_states) * causal_cond;
+    local_mbr |= jpeg2000_get_state(i + 1, j - 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i + 1, j - 1, width, HT_SHIFT_SCAN, block_states) * causal_cond;
+    local_mbr |= jpeg2000_get_state(i + 1, j + 0, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i + 1, j + 0, width, HT_SHIFT_SCAN, block_states) * causal_cond;
+    local_mbr |= jpeg2000_get_state(i + 1, j + 1, width, HT_SHIFT_REF, block_states) * jpeg2000_get_state(i + 1, j + 1, width, HT_SHIFT_SCAN, block_states) * causal_cond;
 
     *mbr |= local_mbr;
 }
@@ -1174,7 +1176,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     jpeg2000_init_mel_decoder(&mel_state);
 
     sample_buf = av_calloc(width * height, sizeof(int32_t));
-    block_states = av_calloc((width + 2) * (height + 2), sizeof(uint8_t));
+    block_states = av_calloc((width + 4) * (height + 4), sizeof(uint8_t));
 
     if (!sample_buf || !block_states) {
         ret = AVERROR(ENOMEM);
