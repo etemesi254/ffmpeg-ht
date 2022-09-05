@@ -459,11 +459,11 @@ jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, S
 
 static av_always_inline int jpeg2000_get_state(int x1, int x2, int width, int shift_by, const uint8_t *block_states)
 {
-    return (block_states[x1 * (width + 2) + x2] >> shift_by) & 1;
+    return (block_states[(x1 + 1) * (width + 2) + (x2 + 1)] >> shift_by) & 1;
 }
 static av_always_inline void jpeg2000_modify_state(int x1, int x2, int width, int value, uint8_t *block_states)
 {
-    block_states[x1 * (width + 2) + x2] |= value;
+    block_states[(x1 + 1) * (width + 2) + (x2 + 1)] |= value;
 }
 
 static int jpeg2000_decode_ht_cleanup(
@@ -1042,7 +1042,7 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
     // Described in clause 7.5
     // procedure: decodeSigPropMag
 
-    StateVars mag_ref;
+    StateVars mag_ref = {0};
     const uint16_t num_v_stripe = block_height / 4;
     uint16_t height = 4;
     uint16_t i_start = 0;
