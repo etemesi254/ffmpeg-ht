@@ -1922,15 +1922,17 @@ static inline void tile_codeblocks(Jpeg2000DecoderContext *s, Jpeg2000DecTile *t
     Jpeg2000T1Context t1;
 
     int compno, reslevelno, bandno;
+    int subbandno;
 
     /* Loop on tile components */
     for (compno = 0; compno < s->ncomponents; compno++) {
-        Jpeg2000Component *comp     = tile->comp + compno;
+        Jpeg2000Component *comp = tile->comp + compno;
         Jpeg2000CodingStyle *codsty = tile->codsty + compno;
+        Jpeg2000QuantStyle *quantStyle = tile->qntsty + compno;
         int coded = 0;
+        subbandno = 0;
 
-        t1.stride = (1<<codsty->log2_cblk_width) + 2;
-
+        t1.stride = (1 << codsty->log2_cblk_width) + 2;
         /* Loop on resolution levels */
         for (reslevelno = 0; reslevelno < codsty->nreslevels2decode; reslevelno++) {
             Jpeg2000ResLevel *rlevel = comp->reslevel + reslevelno;
@@ -1955,18 +1957,20 @@ static inline void tile_codeblocks(Jpeg2000DecoderContext *s, Jpeg2000DecTile *t
                     for (cblkno = 0;
                          cblkno < prec->nb_codeblocks_width * prec->nb_codeblocks_height;
                          cblkno++) {
-                        int x, y,ret;
+                        int x, y, ret,magp;
                         Jpeg2000Cblk *cblk = prec->cblk + cblkno;
+                        // Annex E (Equation E-2) ISO/IEC 15444-1:2019
+                        magp = quantStyle->expn[subbandno] + quantStyle->nguardbits - 1;
                         if (s->is_htj2k)
-                          ret = decode_htj2k(s, codsty, &t1, cblk,
-                                             cblk->coord[0][1] - cblk->coord[0][0],
-                                             cblk->coord[1][1] - cblk->coord[1][0],
-                                             bandpos, comp->roi_shift);
+                            ret = decode_htj2k(s, codsty, &t1, cblk,
+                                               cblk->coord[0][1] - cblk->coord[0][0],
+                                               cblk->coord[1][1] - cblk->coord[1][0],
+                                               magp,comp->roi_shift);
                         else
-                          ret = decode_cblk(s, codsty, &t1, cblk,
-                                    cblk->coord[0][1] - cblk->coord[0][0],
-                                    cblk->coord[1][1] - cblk->coord[1][0],
-                                    bandpos, comp->roi_shift);
+                            ret = decode_cblk(s, codsty, &t1, cblk,
+                                              cblk->coord[0][1] - cblk->coord[0][0],
+                                              cblk->coord[1][1] - cblk->coord[1][0],
+                                              bandpos, comp->roi_shift);
                         if (ret)
                             coded = 1;
                         else
@@ -1982,14 +1986,15 @@ static inline void tile_codeblocks(Jpeg2000DecoderContext *s, Jpeg2000DecTile *t
                             dequantization_int_97(x, y, cblk, comp, &t1, band);
                         else
                             dequantization_int(x, y, cblk, comp, &t1, band);
-                   } /* end cblk */
-                } /*end prec */
+                    } /* end cblk */
+                }     /*end prec */
+                subbandno += 1;
             } /* end band */
         } /* end reslevel */
 
         /* inverse DWT */
         if (coded)
-            ff_dwt_decode(&comp->dwt, codsty->transform == FF_DWT97 ? (void*)comp->f_data : (void*)comp->i_data);
+            ff_dwt_decode(&comp->dwt, codsty->transform == FF_DWT97 ? (void *)comp->f_data : (void *)comp->i_data);
 
     } /*end comp */
 }
