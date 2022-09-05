@@ -40,7 +40,7 @@ typedef struct MelDecoderState {
 
 
 
-int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift);
+int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int magp, uint8_t roi_shift);
 
 /**
  * @brief  CtxVLC tables, borrowed from openhtj2k (https://github.com/osamu620/OpenHTJ2K) (credits to Osamu Watanabe)
