@@ -431,26 +431,9 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state,
     }
 }
 
-static int jpeg2000_import_magref_bit(StateVars *stream, const uint8_t *array, uint32_t length)
+static av_always_inline int  jpeg2000_import_magref_bit(StateVars *stream, const uint8_t *array, uint32_t length)
 {
-    int val;
-    // TODO (cae): Figure out how to use the other refill method here.
-    if (stream->bits == 0) {
-        stream->tmp = 0;
-        if (stream->pos >= 0) {
-            stream->tmp = array[length + stream->pos];
-            stream->pos -= 1;
-        }
-        stream->bits = 8;
-        if (stream->last > 0x8F && (stream->tmp & 0x7F) == 0x7F) {
-            stream->bits = 7;
-        }
-        stream->last = stream->tmp;
-    }
-    stream->bits -= 1;
-    val = stream->tmp & 1;
-    stream->tmp >>= 1;
-    return val;
+    return jpeg2000_bitbuf_get_bits_lsb(stream, 1, array);
 }
 /* Signal EMB decode */
 static int
@@ -1089,10 +1072,10 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
             }
         }
     }
-    return 0;
+    return 1;
 }
 
-int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int bandpos, uint8_t roi_shift)
+int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int magp, uint8_t roi_shift)
 {
     uint8_t p0 = 0; // Number of placeholder passes.
     uint32_t Lcup;  // Length of HT cleanup segment.
@@ -1124,10 +1107,9 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     uint8_t *block_states;
 
     // Post-processing
-    int32_t n, val, sign, r_val, N_b, offset;
+    int32_t n, val, sign, r_val, N_b, offset, z_n;
 
-    // TODO: Stop assuming
-    int32_t M_b = 8;
+    int32_t M_b = magp;
     av_assert0(width <= 1024U && height <= 1024U);
     av_assert0(width * height <= 4096);
     av_assert0(width * height > 0);
@@ -1208,47 +1190,20 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
     if (cblk->npasses > 2)
         if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states)) < 0)
             goto free;
-    if (codsty->transform) {
-        // Reconstruct the values.
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                n = x + (y * t1->stride);
-                val = sample_buf[x + (y * width)];
-                sign = val & 0x80000000;
-                val &= 0x7fffffff;
-                N_b = M_b;
-                offset = M_b > N_b ? M_b - N_b : 0;
-                r_val = 1 << (pLSB - 1 + offset);
-                if (val != 0 && N_b < M_b)
-                    val |= r_val;
-                // convert sign-magnitude to twos complement form
-                if (sign)
-                    val = -val;
-                t1->data[n] = val >> (pLSB - 1);
-            }
-        }
-    } else {
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                n = x + (y * t1->stride);
-                val = sample_buf[x + (y * width)];
-                sign = val & 0x80000000;
-                val &= 0x7fffffff;
-                if (roi_shift) {
-                    N_b = M_b;
-                } else {
-                    N_b = S_blk + 1 + z_blk;
-                }
-                offset = M_b > N_b ? M_b - N_b : 0;
 
-                r_val = 1 << (pLSB - 1 + offset);
-                if (val != 0)
-                    val |= r_val;
-                if (sign)
-                    val = -val;
-
-                t1->data[n] = val >> (pLSB - 1);
-            }
+    pLSB = 31 - M_b;
+    // Reconstruct the values.
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            n = x + (y * t1->stride);
+            val = sample_buf[x + (y * width)];
+            sign = val & 0x80000000;
+            val &= 0x7fffffff;
+            // convert sign-magnitude to twos complement form
+            if (sign)
+                val = -val;
+            val >>= (pLSB - 1);
+            t1->data[n] = val;
         }
     }
 free:
