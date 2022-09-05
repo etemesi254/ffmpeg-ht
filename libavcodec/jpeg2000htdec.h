@@ -18,8 +18,8 @@
 * License along with FFmpeg; if not, write to the Free Software
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
-#ifndef AVCODEC_HTJ2K_H
-#define AVCODEC_HTJ2K_H
+#ifndef AVCODEC_JPEG2000HTDEC_H
+#define AVCODEC_JPEG2000HTDEC_H
 
 #include <stdint.h>
 #include "jpeg2000.h"
@@ -207,4 +207,4 @@ static const uint16_t dec_CxtVLC_table0[1024] = {
     0x2FF9, 0x5DDF, 0x2EED, 0x003E, 0x1FF9, 0x2BBD, 0xAFFB, 0x00CE, 0x8FF9, 0xEFFF, 0xFFFB, 0x667F, 0x4FF9,
     0x006D, 0x3FFB, 0x8AAF, 0x2FF9, 0x00EE, 0x9FFD, 0x233F, 0x1FF9, 0x009D, 0x000A, 0x1BBF, 0x8FF9, 0x4EEF,
     0x6FFD, 0x455F, 0x4FF9, 0x002C, 0x5FFB, 0x008E, 0x2FF9, 0x99DF, 0x4DDD, 0x111F};
-#endif /* AVCODEC_HTJ2K_H */
+#endif /* AVCODEC_JPEG2000HTDEC_H */
