@@ -34,7 +34,7 @@
 #define HT_SHIFT_REF_IND 2
 /**
  * @brief Table 2 in clause 7.3.3
- * */
+ **/
 const static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
 
 /**
@@ -56,7 +56,7 @@ static void jpeg2000_init_zero(StateVars *s)
     s->pos = 0;
     s->last = 0;
 }
-/*Initialize MEL bit stream*/
+
 static void jpeg2000_init_mel(StateVars *s, uint32_t Pcup)
 {
     jpeg2000_init_zero(s);
@@ -80,8 +80,10 @@ static void jpeg2000_init_mel_decoder(MelDecoderState *mel_state)
     mel_state->one = 0;
 }
 /**
- * Refill the buffer backwards in little Endian while skipping
- * over stuffing bits that appear in the position of any byte whose
+ * @brief Refill the buffer backwards in little Endian while skipping
+ * over stuffing bits
+ *
+ * Stuffing bits are those that appear in the position of any byte whose
  * LSBs are all 1's if the last consumed byte was larger than 0x8F
  */
 static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
@@ -101,18 +103,20 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
      * them to DCBA, but the bitstream is constructed in such a way that it is
      * BE when reading from back to front,so we need to swap bytes
      * but this doesn't work when position is less than 3,
-     * we end up reading bits from the MEL byte-stream which is a recipe for sleepless nights.
+     * we end up reading bits from the MEL byte-stream which
+     * is a recipe for sleepless nights.
      *
      * So the trick is to branchlessly read and mask
      * depending on whatever was the initial position,
      * the mask is simply either 32 bits, 24 bits ,8 bits or 0 bits.
-     * depending on how many bytes are available, with this, we don't read past the end of the buffer,we mask
+     * depending on how many bytes are available, with this, we don't
+     * read past the end of the buffer,we mask
      * bits we already read ensuring we don't read twice.
      * and we can do it branchlessly without checking for positions.
      *
-     * We need to watch out for negative shift values which are UB in C hence the
-     * MAX declarative.
-     * */
+     * We need to watch out for negative shift values which are UB in C hence
+     * the MAX declarative.
+     */
 
     position -= 4;
     mask = (UINT64_C(1) << (FFMIN(4, FFMAX(buffer->pos, 0))) * 8) - 1;
@@ -152,9 +156,11 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     buffer->pos = FFMAX(0, position);
     return 0;
 }
-
-/* Refill  the stream with bytes */
-static void jpeg2000_bitbuf_refill_bytewise(StateVars *buffer,
+/**
+ * @brief Refill the bit-buffer reading new bits going forward
+ * in the stream while skipping over stuffed bits.
+ */
+static void jpeg2000_bitbuf_refill_forward(StateVars *buffer,
                                             const uint8_t *array,
                                             uint32_t length)
 {
@@ -176,7 +182,7 @@ static void jpeg2000_bitbuf_refill_bytewise(StateVars *buffer,
  *
  * @param buf: Struct containing bit buffers
  * @param nbits: Number of bits to remove.
- * */
+ */
 static av_always_inline void jpeg2000_bitbuf_drop_bits_lsb(StateVars *buf,
                                                            uint8_t nbits)
 {
@@ -188,10 +194,11 @@ static av_always_inline void jpeg2000_bitbuf_drop_bits_lsb(StateVars *buf,
     buf->bits_left -= nbits;
 }
 /**
- * Get bits from the bit buffer reading them
+ * @brief  Get bits from the bit buffer reading them
  * from the least significant bits moving to the most significant bits.
- * in case there are fewer bits, refill from `buf` moving backwards.
- * */
+ *
+ * In case there are fewer bits, refill from `buf` moving backwards.
+ */
 static av_always_inline uint64_t jpeg2000_bitbuf_get_bits_lsb(
     StateVars *bit_stream, uint8_t nbits, const uint8_t *buf)
 {
@@ -204,24 +211,25 @@ static av_always_inline uint64_t jpeg2000_bitbuf_get_bits_lsb(
     return bits;
 }
 /**
- * Get bits from the bit buffer reading them
+ * @brief Get bits from the bit buffer reading them
  * from the least significant bits moving to the most significant bits
- * in case there are fewer bits, refill from `buf` moving forward
- * */
+ *
+ * In case there are fewer bits, refill from `buf` moving forward
+ */
 static av_always_inline uint64_t jpeg2000_bitbuf_get_bits_lsb_forward(
     StateVars *bit_stream, uint8_t nbits, const uint8_t *buf, uint32_t length)
 {
     uint64_t bits;
     uint64_t mask = (1ull << nbits) - 1;
     if (bit_stream->bits_left <= nbits)
-        jpeg2000_bitbuf_refill_bytewise(bit_stream, buf, length);
+        jpeg2000_bitbuf_refill_forward(bit_stream, buf, length);
     bits = bit_stream->bit_buf & mask;
     jpeg2000_bitbuf_drop_bits_lsb(bit_stream, nbits);
     return bits;
 }
 /**
- * Look ahead bit buffer without discarding bits
- * */
+ * @brief Look ahead bit buffer without discarding bits
+ */
 static av_always_inline uint64_t
 jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream, uint8_t nbits)
 {
@@ -230,10 +238,9 @@ jpeg2000_bitbuf_peek_bits_lsb(StateVars *stream, uint8_t nbits)
     return stream->bit_buf & mask;
 }
 
-/* *
+/**
  * Variable Length Decoding Routines
  */
-
 static void jpeg2000_init_vlc(StateVars *s, uint32_t Lcup, uint32_t Pcup, const uint8_t *Dcup)
 {
     s->bits_left = 0;
@@ -286,8 +293,8 @@ static int jpeg2000_decode_ctx_vlc(Jpeg2000DecoderContext *s,
     return 0;
 }
 /**
- * Decode variable length u-vlc prefix
- * */
+ * @brief Decode variable length u-vlc prefix
+ */
 static av_always_inline uint8_t
 vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
 {
@@ -314,7 +321,9 @@ vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
         return 3;
     return 5;
 }
-
+/**
+ * @brief Decode variable length u-vlc suffix
+ */
 static av_always_inline uint8_t vlc_decode_u_suffix(
     StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array)
 {
@@ -339,6 +348,9 @@ static av_always_inline uint8_t vlc_decode_u_suffix(
     return bits;
 }
 
+/**
+ * @brief Decode variable length u-vlc suffix
+ */
 static av_always_inline uint8_t vlc_decode_u_extension(
     StateVars *vlc_stream, uint8_t suffix, const uint8_t *refill_array)
 {
@@ -349,7 +361,9 @@ static av_always_inline uint8_t vlc_decode_u_extension(
     return jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 4, refill_array);
 }
 
-/* Magnitude and Sign decode procedures*/
+/**
+ * Magnitude and Sign decode procedures
+*/
 
 static int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream, int32_t m_n, int32_t i_n, const uint8_t *buf, uint32_t length)
 {
@@ -380,8 +394,8 @@ recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2], int
         }
     }
 }
-/*MEL stream decoding procedure*/
 
+/*MEL stream decoding procedure*/
 static int jpeg2000_import_bit(StateVars *stream, const uint8_t *array, uint32_t length)
 {
     if (stream->bits == 0) {
@@ -430,11 +444,12 @@ static int jpeg2000_decode_mel_sym(MelDecoderState *mel_state,
         return 1;
     }
 }
-
+/** Magref decoding procedures */
 static av_always_inline int jpeg2000_import_magref_bit(StateVars *stream, const uint8_t *array, uint32_t length)
 {
     return jpeg2000_bitbuf_get_bits_lsb(stream, 1, array);
 }
+
 /* Signal EMB decode */
 static int
 jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t context, uint32_t Lcup, uint32_t Pcup)
@@ -641,7 +656,7 @@ static int jpeg2000_decode_ht_cleanup(
         // move to the next quad pair
         q += 2;
     }
-    if (quad_width % 2 == 1) { // If the quad width is an odd number
+    if (quad_width % 2 == 1) {
         q1 = q;
 
         if ((ret = jpeg2000_decode_sig_emb(s, mel_state, mel_stream, vlc_stream,
@@ -679,9 +694,11 @@ static int jpeg2000_decode_ht_cleanup(
      * As an optimization, we can replace modulo operations with
      * checking if a number is divisible , since that's the only thing we need.
      * this is paired with is_divisible.
-     * Credits to Daniel Lemire blog post: https://lemire.me/blog/2019/02/08/faster-remainders-when-the-divisor-is-a-constant-beating-compilers-and-libdivide/
-     * It's UB on zero, but we can't have a quad being zero, the spec doesn't allow, so we error out early in case that's the case.
-     * */
+     * Credits to Daniel Lemire blog post:
+     * https://lemire.me/blog/2019/02/08/faster-remainders-when-the-divisor-is-a-constant-beating-compilers-and-libdivide/
+     * It's UB on zero, but we can't have a quad being zero, the spec doesn't allow,
+     * so we error out early in case that's the case.
+     */
 
     c = 1 + UINT64_C(0xffffffffffffffff) / quad_width;
 
@@ -729,7 +746,6 @@ static int jpeg2000_decode_ht_cleanup(
             for (int i = 0; i < 4; i++)
                 sigma_n[4 * q2 + i] = (sig_pat[J2K_Q2] >> i) & 1;
 
-            // fallback if res_off = [0,0]
             u[J2K_Q1] = 0;
             u[J2K_Q2] = 0;
 
@@ -989,9 +1005,9 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
     for (int j = 0; j < j_s + width; j++) {
         for (int i = 0; i < i_s + height; i++) {
             sp = &sample_buf[j + (i * (stride - 2))];
-            if ((*sp & (1 << pLSB)) != 0) {
+            if ((*sp & (1 << pLSB)) != 0)
                 *sp = (*sp & 0x7FFFFFFF) | (jpeg2000_import_bit(sig_prop, magref_segment, magref_length) << 31);
-            }
+
         }
     }
 }
@@ -1077,19 +1093,19 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
 
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int magp, uint8_t roi_shift)
 {
-    uint8_t p0 = 0; // Number of placeholder passes.
-    uint32_t Lcup;  // Length of HT cleanup segment.
-    uint32_t Lref;  // Length of Refinement segment.
-    uint32_t Scup;  // HT cleanup segment suffix length.
-    uint32_t Pcup;  // HT cleanup segment prefix length.
+    uint8_t p0 = 0;     // Number of placeholder passes.
+    uint32_t Lcup;      // Length of HT cleanup segment.
+    uint32_t Lref;      // Length of Refinement segment.
+    uint32_t Scup;      // HT cleanup segment suffix length.
+    uint32_t Pcup;      // HT cleanup segment prefix length.
 
-    uint8_t S_blk; // Number of skipped magnitude bitplanes;
+    uint8_t S_blk;      // Number of skipped magnitude bitplanes;
     uint8_t pLSB;
 
-    uint8_t *Dcup; // Byte of an HT cleanup segment.
-    uint8_t *Dref; // Byte of an HT refinement segment.
+    uint8_t *Dcup;      // Byte of an HT cleanup segment.
+    uint8_t *Dref;      // Byte of an HT refinement segment.
 
-    int z_blk; // Number of ht coding pass
+    int z_blk;          // Number of ht coding pass
 
     uint8_t empty_passes;
 
