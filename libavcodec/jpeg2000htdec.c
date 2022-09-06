@@ -116,8 +116,8 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
 
     position -= 4;
     mask = (UINT64_C(1) << (FFMIN(4, FFMAX(buffer->pos, 0))) * 8) - 1;
-    memcpy(&tmp, array + 1 + position, 4);
-    tmp = (uint64_t)av_be2ne32((uint32_t)tmp) & mask;
+    tmp = (array[position + 1] << 24) + (array[position + 2] << 16) + (array[position + 3] << 8) + array[position + 4];
+    tmp &= mask;
 
     // Branchlessly unstuff  bits
 
@@ -149,7 +149,7 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     // Add bits to the MSB of the bit buffer
     buffer->bit_buf |= tmp << buffer->bits_left;
     buffer->bits_left += new_bits;
-    buffer->pos = FFMAX(-1, position);
+    buffer->pos = FFMAX(0, position);
     return 0;
 }
 
@@ -181,7 +181,7 @@ static av_always_inline void jpeg2000_bitbuf_drop_bits_lsb(StateVars *buf,
                                                            uint8_t nbits)
 {
     if (buf->bits_left < nbits) {
-        av_log(NULL, AV_LOG_ERROR, "Invalid bit read of %d, bits in buffer are %d", nbits, buf->bits_left);
+        av_log(NULL, AV_LOG_ERROR, "Invalid bit read of %d, bits in buffer are %d\n", nbits, buf->bits_left);
         av_assert0(0);
     }
     buf->bit_buf >>= nbits;
