@@ -34,12 +34,12 @@
 #define HT_SHIFT_REF_IND 2
 /**
  * @brief Table 2 in clause 7.3.3
- **/
+ */
 const static uint8_t MEL_E[13] = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 4, 5};
 
 /**
  *  Given a precomputed c, checks whether n % d == 0
- **/
+ */
 static av_always_inline uint32_t is_divisible(uint32_t n, uint64_t c)
 {
     return n * c <= c - 1;
