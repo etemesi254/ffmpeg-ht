@@ -65,7 +65,7 @@ static void jpeg2000_init_mel(StateVars *s, uint32_t Pcup)
 
 static void jpeg2000_init_mag_ref(StateVars *s, uint32_t Lref)
 {
-    s->pos = Lref - 1;
+    s->pos = Lref - 2;
     s->bits = 0;
     s->last = 0xFF;
     s->tmp = 0;
@@ -92,7 +92,6 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
     uint32_t new_bits = 32;
     uint32_t mask;
 
-    // TODO: (cae), confirm if we need to swap in BE systems.
     if (buffer->bits_left > 32)
         return 0; // enough data, no need to pull in more bits
 
@@ -385,7 +384,6 @@ recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2], int
 
 static int jpeg2000_import_bit(StateVars *stream, const uint8_t *array, uint32_t length)
 {
-    // TODO (cae): Figure out how to use the other refill method here.
     if (stream->bits == 0) {
         stream->bits = (stream->tmp == 0xFF) ? 7 : 8;
         if (stream->pos < length) {
