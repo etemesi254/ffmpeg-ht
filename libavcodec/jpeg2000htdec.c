@@ -348,9 +348,7 @@ static av_always_inline uint8_t vlc_decode_u_extension(
 {
     // clause 7.3.6
     // procedure decodeUExtension.
-    if (suffix < 28)
-        return 0;
-    return jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 4, refill_array);
+    return jpeg2000_bitbuf_get_bits_lsb(vlc_stream, 4 * (suffix >= 28), refill_array);
 }
 
 /**
