@@ -301,7 +301,7 @@ vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
     // clause 7.3.6
     // procedure : decodeUPrefix.
     static uint8_t return_value[8] = {5, 1, 2, 1, 3, 1, 2, 1};
-    static uint8_t drop_bits[8]    = {3, 1, 2, 1, 3, 1, 2, 1};
+    static uint8_t drop_bits[8] = {3, 1, 2, 1, 3, 1, 2, 1};
 
     uint8_t bits;
 
@@ -883,41 +883,35 @@ static int jpeg2000_decode_ht_cleanup(
             q += 1;
         }
     }
+    int x1 = 0, x2 = 0, x3 = 0;
     // convert to raster-scan
     for (int y = 0; y < quad_height; y++) {
         for (int x = 0; x < quad_width; x++) {
             j1 = 2 * y;
             j2 = 2 * x;
 
-            // set sample
             sample_buf[j2 + (j1 * width)] = (int32_t)*mu;
             jpeg2000_modify_state(j1, j2, width, *sigma, block_states);
-
             sigma += 1;
-            mu += 1;
+            mu    += 1;
 
-            if (y != quad_height - 1 || is_border_y == 0) {
-                sample_buf[j2 + ((j1 + 1) * width)] = (int32_t)*mu;
-                jpeg2000_modify_state(j1 + 1, j2, width, *sigma, block_states);
-            }
-
+            x1 = y != quad_height - 1 || is_border_y == 0;
+            sample_buf[j2 + ((j1 + 1) * width)] = ((int32_t)*mu) * x1;
+            jpeg2000_modify_state(j1 + 1, j2, width, (*sigma) * x1, block_states);
             sigma += 1;
-            mu += 1;
+            mu    += 1;
 
-            if (x != quad_width - 1 || is_border_x == 0) {
-                sample_buf[(j2 + 1) + (j1 * width)] = (int32_t)*mu;
-                jpeg2000_modify_state(j1, j2 + 1, width, *sigma, block_states);
-            }
-
+            x2 = x != quad_width - 1 || is_border_x == 0;
+            sample_buf[(j2 + 1) + (j1 * width)] = ((int32_t)*mu) * x2;
+            jpeg2000_modify_state(j1, j2 + 1, width, (*sigma) * x2, block_states);
             sigma += 1;
-            mu += 1;
+            mu    += 1;
 
-            if ((y != quad_height - 1 || is_border_y == 0) && (x != quad_width - 1 || is_border_x == 0)) {
-                sample_buf[(j2 + 1) + (j1 + 1) * width] = (int32_t)*mu;
-                jpeg2000_modify_state(j1 + 1, j2 + 1, width, *sigma, block_states);
-            }
+            x3 = x1 | x2;
+            sample_buf[(j2 + 1) + (j1 + 1) * width] = ((int32_t)*mu) * x3;
+            jpeg2000_modify_state(j1 + 1, j2 + 1, width, (*sigma) * x3, block_states);
             sigma += 1;
-            mu += 1;
+            mu    += 1;
         }
     }
     ret = 1;
@@ -1168,7 +1162,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
 
     jpeg2000_init_mel_decoder(&mel_state);
 
-    sample_buf = av_calloc(width * height, sizeof(int32_t));
+    sample_buf = av_calloc((width + 4) * (height + 4), sizeof(int32_t));
     block_states = av_calloc((width + 4) * (height + 4), sizeof(uint8_t));
 
     if (!sample_buf || !block_states) {
