@@ -106,7 +106,7 @@ static const int dwt_norms[2][4][10] = { // [dwt_type][band][rlevel] (multiplied
 typedef struct {
    Jpeg2000Component *comp;
    double *layer_rates;
-} Jpeg2000Tile;
+} Jpeg2000EncTile;
 
 typedef struct {
     AVClass *class;
@@ -131,7 +131,7 @@ typedef struct {
     Jpeg2000CodingStyle codsty;
     Jpeg2000QuantStyle  qntsty;
 
-    Jpeg2000Tile *tile;
+    Jpeg2000EncTile *tile;
     int layer_rates[100];
     uint8_t compression_rate_enc; ///< Is compression done using compression ratio?
 
@@ -171,7 +171,7 @@ static void dump(Jpeg2000EncoderContext *s, FILE *fd)
             s->width, s->height, s->tile_width, s->tile_height,
             s->numXtiles, s->numYtiles, s->ncomponents);
     for (tileno = 0; tileno < s->numXtiles * s->numYtiles; tileno++){
-        Jpeg2000Tile *tile = s->tile + tileno;
+        Jpeg2000EncTile *tile = s->tile + tileno;
         nspaces(fd, 2);
         fprintf(fd, "tile %d:\n", tileno);
         for(compno = 0; compno < s->ncomponents; compno++){
@@ -429,7 +429,7 @@ static void compute_rates(Jpeg2000EncoderContext* s)
     int layno, compno;
     for (i = 0; i < s->numYtiles; i++) {
         for (j = 0; j < s->numXtiles; j++) {
-            Jpeg2000Tile *tile = &s->tile[s->numXtiles * i + j];
+            Jpeg2000EncTile *tile = &s->tile[s->numXtiles * i + j];
             for (compno = 0; compno < s->ncomponents; compno++) {
                 int tilew = tile->comp[compno].coord[0][1] - tile->comp[compno].coord[0][0];
                 int tileh = tile->comp[compno].coord[1][1] - tile->comp[compno].coord[1][0];
@@ -462,12 +462,12 @@ static int init_tiles(Jpeg2000EncoderContext *s)
     s->numXtiles = ff_jpeg2000_ceildiv(s->width, s->tile_width);
     s->numYtiles = ff_jpeg2000_ceildiv(s->height, s->tile_height);
 
-    s->tile = av_calloc(s->numXtiles, s->numYtiles * sizeof(Jpeg2000Tile));
+    s->tile = av_calloc(s->numXtiles, s->numYtiles * sizeof(Jpeg2000EncTile));
     if (!s->tile)
         return AVERROR(ENOMEM);
     for (tileno = 0, tiley = 0; tiley < s->numYtiles; tiley++)
         for (tilex = 0; tilex < s->numXtiles; tilex++, tileno++){
-            Jpeg2000Tile *tile = s->tile + tileno;
+            Jpeg2000EncTile *tile = s->tile + tileno;
 
             tile->comp = av_calloc(s->ncomponents, sizeof(*tile->comp));
             if (!tile->comp)
@@ -511,7 +511,7 @@ static int init_tiles(Jpeg2000EncoderContext *s)
         int tileno, compno, i, y, x;                                                                                        \
         PIXEL *line;                                                                                                        \
         for (tileno = 0; tileno < s->numXtiles * s->numYtiles; tileno++){                                                   \
-            Jpeg2000Tile *tile = s->tile + tileno;                                                                          \
+            Jpeg2000EncTile *tile = s->tile + tileno;                                                                          \
             if (s->planar){                                                                                                 \
                 for (compno = 0; compno < s->ncomponents; compno++){                                                        \
                     Jpeg2000Component *comp = tile->comp + compno;                                                          \
@@ -703,7 +703,7 @@ static void encode_clnpass(Jpeg2000T1Context *t1, int width, int height, int ban
         }
 }
 
-static void encode_cblk(Jpeg2000EncoderContext *s, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, Jpeg2000Tile *tile,
+static void encode_cblk(Jpeg2000EncoderContext *s, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, Jpeg2000EncTile *tile,
                         int width, int height, int bandpos, int lev)
 {
     int pass_t = 2, passno, x, y, max=0, nmsedec, bpno;
@@ -937,7 +937,7 @@ static int encode_packet(Jpeg2000EncoderContext *s, Jpeg2000ResLevel *rlevel, in
     return 0;
 }
 
-static int encode_packets(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile, int tileno, int nlayers)
+static int encode_packets(Jpeg2000EncoderContext *s, Jpeg2000EncTile *tile, int tileno, int nlayers)
 {
     int compno, reslevelno, layno, ret;
     Jpeg2000CodingStyle *codsty = &s->codsty;
@@ -1183,7 +1183,7 @@ static int encode_packets(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile, int til
     return 0;
 }
 
-static void makelayer(Jpeg2000EncoderContext *s, int layno, double thresh, Jpeg2000Tile* tile, int final)
+static void makelayer(Jpeg2000EncoderContext *s, int layno, double thresh, Jpeg2000EncTile* tile, int final)
 {
     int compno, resno, bandno, precno, cblkno;
     int passno;
@@ -1266,7 +1266,7 @@ static void makelayer(Jpeg2000EncoderContext *s, int layno, double thresh, Jpeg2
     }
 }
 
-static void makelayers(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile)
+static void makelayers(Jpeg2000EncoderContext *s, Jpeg2000EncTile *tile)
 {
     int precno, compno, reslevelno, bandno, cblkno, lev, passno, layno;
     int i;
@@ -1367,7 +1367,7 @@ static int getcut(Jpeg2000Cblk *cblk, int64_t lambda, int dwt_norm)
     return res;
 }
 
-static void truncpasses(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile)
+static void truncpasses(Jpeg2000EncoderContext *s, Jpeg2000EncTile *tile)
 {
     int precno, compno, reslevelno, bandno, cblkno, lev;
     Jpeg2000CodingStyle *codsty = &s->codsty;
@@ -1401,7 +1401,7 @@ static void truncpasses(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile)
     }
 }
 
-static int encode_tile(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile, int tileno)
+static int encode_tile(Jpeg2000EncoderContext *s, Jpeg2000EncTile *tile, int tileno)
 {
     int compno, reslevelno, bandno, ret;
     Jpeg2000T1Context t1;
@@ -1516,7 +1516,7 @@ static void reinit(Jpeg2000EncoderContext *s)
 {
     int tileno, compno;
     for (tileno = 0; tileno < s->numXtiles * s->numYtiles; tileno++){
-        Jpeg2000Tile *tile = s->tile + tileno;
+        Jpeg2000EncTile *tile = s->tile + tileno;
         for (compno = 0; compno < s->ncomponents; compno++)
             ff_jpeg2000_reinit(tile->comp + compno, &s->codsty);
     }
