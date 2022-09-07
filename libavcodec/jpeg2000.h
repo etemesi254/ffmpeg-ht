@@ -34,6 +34,8 @@
 #include "avcodec.h"
 #include "mqc.h"
 #include "jpeg2000dwt.h"
+#include "jpeg2000dsp.h"
+#include "bytestream.h"
 
 enum Jpeg2000Markers {
   JPEG2000_SOC = 0xff4f, // start of codestream
@@ -112,6 +114,8 @@ enum Jpeg2000Quantsty { // quantization style
 #define JPEG2000_CSTY_PREC      0x01 // Precincts defined in coding style
 #define JPEG2000_CSTY_SOP       0x02 // SOP marker present
 #define JPEG2000_CSTY_EPH       0x04 // EPH marker present
+#define JPEG2000_CTSY_HTJ2K_F   0x40 // Only HT code-blocks (Rec. ITU-T T.814 | ISO/IEC 15444-15) are present
+#define JPEG2000_CTSY_HTJ2K_M   0xC0 // HT code blocks (Rec. ITU-T T.814 | ISO/IEC 15444-15) can be present
 
 // Progression orders
 #define JPEG2000_PGOD_LRCP      0x00  // Layer-resolution level-component-position progression
@@ -119,6 +123,10 @@ enum Jpeg2000Quantsty { // quantization style
 #define JPEG2000_PGOD_RPCL      0x02  // Resolution level-position-component-layer progression
 #define JPEG2000_PGOD_PCRL      0x03  // Position-component-resolution level-layer progression
 #define JPEG2000_PGOD_CPRL      0x04  // Component-position-resolution level-layer progression
+
+
+// misc constants
+#define JPEG2000_RSIZ_BIT  (1<<14)
 
 typedef struct Jpeg2000T1Context {
     int data[6144];
