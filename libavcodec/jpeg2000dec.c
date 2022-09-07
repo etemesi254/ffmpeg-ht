@@ -425,7 +425,11 @@ static int get_cox(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c)
     }
 
     c->cblk_style = bytestream2_get_byteu(&s->g);
-    if (c->cblk_style != 0) { // cblk style
+    if (c->cblk_style & JPEG2000_CTSY_HTJ2K_M || c->cblk_style & JPEG2000_CTSY_HTJ2K_F){
+        av_log(s->avctx,AV_LOG_TRACE,"High Throughput jpeg 2000 codestream.\n");
+        s->is_htj2k = 1;
+    }
+    if (c->cblk_style != 0 && !(c->cblk_style & JPEG2000_CTSY_HTJ2K_F) /*Covers both partial and full htj2k stream */) { // cblk style
         av_log(s->avctx, AV_LOG_WARNING, "extra cblk styles %X\n", c->cblk_style);
         if (c->cblk_style & JPEG2000_CBLK_BYPASS)
             av_log(s->avctx, AV_LOG_WARNING, "Selective arithmetic coding bypass\n");
