@@ -1185,11 +1185,8 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         for (int x = 0; x < width; x++) {
             n = x + (y * t1->stride);
             val = sample_buf[x + (y * width)];
-            sign = val & 0x80000000;
-            val &= 0x7fffffff;
-            // convert sign-magnitude to twos complement form
-            if (sign)
-                val = -val;
+            // Convert sign-magnitude to twos complement.
+            val = val >> 31 ? 0x80000000 - val : val;
             val >>= (pLSB - 1);
             t1->data[n] = val;
         }
