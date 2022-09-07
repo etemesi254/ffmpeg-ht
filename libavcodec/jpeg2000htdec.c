@@ -448,8 +448,8 @@ jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, S
         uint8_t sym;
         sym = jpeg2000_decode_mel_sym(mel_state, mel_stream, Dcup, Lcup);
         if (sym == 0) {
-            sig_pat[pos] = 0;
-            res_off[pos] = 0;
+            sig_pat[pos]   = 0;
+            res_off[pos]   = 0;
             emb_pat_k[pos] = 0;
             emb_pat_1[pos] = 0;
             return 0;
@@ -470,34 +470,37 @@ static av_always_inline void jpeg2000_modify_state(int x1, int x2, int width, in
 }
 
 static int jpeg2000_decode_ht_cleanup(
-    Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height, int32_t *sample_buf, uint8_t *block_states)
+    Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Jpeg2000T1Context *t1, MelDecoderState *mel_state,
+    StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup,
+    uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height, int32_t *sample_buf,
+    uint8_t *block_states)
 {
     uint16_t q = 0; // Represents current quad position.
     uint16_t q1, q2;
     uint16_t context1, context2;
     uint16_t context = 0;
 
-    uint8_t sig_pat[2] = {0};   // significance pattern
-    uint8_t res_off[2] = {0};   // residual offset
-    uint8_t emb_pat_k[2] = {0}; // Exponent Max Bound pattern K
-    uint8_t emb_pat_1[2] = {0}; // Exponent Max Bound pattern 1.
-    uint8_t gamma[2] = {0};
+    uint8_t sig_pat[2]   = {0};   // significance pattern
+    uint8_t res_off[2]   = {0};   // residual offset
+    uint8_t emb_pat_k[2] = {0};   // Exponent Max Bound pattern K
+    uint8_t emb_pat_1[2] = {0};   // Exponent Max Bound pattern 1.
+    uint8_t gamma[2]     = {0};
 
-    uint8_t E_n[2] = {0};
-    uint8_t E_ne[2] = {0};
-    uint8_t E_nw[2] = {0};
-    uint8_t E_nf[2] = {0};
+    uint8_t E_n[2]       = {0};
+    uint8_t E_ne[2]      = {0};
+    uint8_t E_nw[2]      = {0};
+    uint8_t E_nf[2]      = {0};
 
-    uint8_t max_e[2] = {0};
+    uint8_t max_e[2]     = {0};
 
-    uint8_t u_pfx[2] = {0};
-    uint8_t u_sfx[2] = {0};
-    uint8_t u_ext[2] = {0};
+    uint8_t u_pfx[2]      = {0};
+    uint8_t u_sfx[2]      = {0};
+    uint8_t u_ext[2]      = {0};
 
-    int32_t u[2] = {0};
-    int32_t U[2] = {0}; // Exponent bound (7.3.7)
-    int32_t m_n[2] = {0};
-    int32_t known_1[2] = {0};
+    int32_t u[2]          = {0};
+    int32_t U[2]          = {0}; // Exponent bound (7.3.7)
+    int32_t m_n[2]        = {0};
+    int32_t known_1[2]    = {0};
 
     int32_t m[2][4] = {0};
     int32_t v[2][4] = {0};
@@ -893,7 +896,7 @@ static int jpeg2000_decode_ht_cleanup(
             sample_buf[j2 + (j1 * width)] = (int32_t)*mu;
             jpeg2000_modify_state(j1, j2, width, *sigma, block_states);
             sigma += 1;
-            mu    += 1;
+            mu += 1;
 
             x1 = y != quad_height - 1 || is_border_y == 0;
             sample_buf[j2 + ((j1 + 1) * width)] = ((int32_t)*mu) * x1;
@@ -950,7 +953,10 @@ static void jpeg2000_calc_mbr(uint8_t *mbr, const uint16_t i, const uint16_t j, 
 
     *mbr |= local_mbr;
 }
-static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s, int width, int height, int stride, int pLSB, int32_t *sample_buf, uint8_t *block_states, uint8_t *magref_segment, uint32_t magref_length)
+static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s, int width,
+                                           int height, int stride, int pLSB, int32_t *sample_buf,
+                                           uint8_t *block_states, uint8_t *magref_segment,
+                                           uint32_t magref_length)
 {
     int32_t *sp;
     uint8_t causal_cond = 0;
@@ -985,7 +991,9 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
     }
 }
 
-static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
+static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height,
+                                    uint8_t *magref_segment, uint32_t magref_length,
+                                    uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
 {
     // Described in clause 7.4
     // procedure: decodeSigPropMag
@@ -1004,27 +1012,37 @@ static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t
     for (int n1 = 0; n1 < num_v_stripe; n1++) {
         j = 0;
         for (int n2 = 0; n2 < num_h_stripe; n2++) {
-            jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
+            jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride,
+                                           pLSB, sample_buf, block_states, magref_segment,
+                                           magref_length);
             j += 4;
         }
         last_width = width % 4;
         if (last_width)
-            jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
+            jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride,
+                                           pLSB, sample_buf, block_states, magref_segment,
+                                           magref_length);
         i += 4;
     }
     // decode remaining height stripes
     b_height = height % 4;
     j = 0;
     for (int n2 = 0; n2 < num_h_stripe; n2++) {
-        jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
+        jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride,
+                                       pLSB, sample_buf, block_states, magref_segment,
+                                       magref_length);
         j += 4;
     }
     last_width = width % 4;
     if (last_width)
-        jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
+        jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride,
+                                       pLSB, sample_buf, block_states, magref_segment,
+                                       magref_length);
 }
 
-static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t block_height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
+static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t block_height,
+                                  uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB,
+                                  int32_t *sample_buf, uint8_t *block_states)
 {
     // Described in clause 7.5
     // procedure: decodeSigPropMag
@@ -1064,7 +1082,8 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
     return 1;
 }
 
-int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int magp, uint8_t roi_shift)
+int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1,
+                 Jpeg2000Cblk *cblk, int width, int height, int magp, uint8_t roi_shift)
 {
     uint8_t p0 = 0; // Number of placeholder passes.
     uint32_t Lcup;  // Length of HT cleanup segment.
@@ -1169,14 +1188,18 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg200
         ret = AVERROR(ENOMEM);
         goto free;
     }
-    if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
+    if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc,
+                                          &mag_sgn, Dcup, Lcup, Pcup, pLSB, width,
+                                          height, sample_buf, block_states)) < 0)
         goto free;
 
     if (cblk->npasses > 1)
-        jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states);
+        jpeg2000_decode_sigprop(cblk, width, height, Dref, Lref,
+                                pLSB - 1, sample_buf, block_states);
 
     if (cblk->npasses > 2)
-        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref, pLSB - 1, sample_buf, block_states)) < 0)
+        if ((ret = jpeg2000_decode_magref(cblk, width, height, Dref, Lref,
+                                          pLSB - 1, sample_buf, block_states)) < 0)
             goto free;
 
     pLSB = 31 - M_b;
