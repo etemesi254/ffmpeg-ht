@@ -307,8 +307,6 @@ vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
 
     bits = jpeg2000_bitbuf_peek_bits_lsb(vlc_stream, 3);
 
-    // TODO: See if this can be simplified to be a simple AND and
-    // drop bits.
     if (bits & 0b1) {
         jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 1);
         return 1;
@@ -381,14 +379,7 @@ static int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream, int32_t m_n, i
 }
 
 static av_always_inline void
-recover_mag_sgn(StateVars *mag_sgn, uint8_t pos,
-                uint16_t q, int32_t m_n[2],
-                int32_t known_1[2],
-                const uint8_t emb_pat_1[2],
-                int32_t v[2][4], int32_t m[2][4],
-                uint8_t *E, uint32_t *mu_n,
-                const uint8_t *Dcup,
-                uint32_t Pcup, uint32_t pLSB)
+recover_mag_sgn(StateVars *mag_sgn, uint8_t pos, uint16_t q, int32_t m_n[2], int32_t known_1[2], const uint8_t emb_pat_1[2], int32_t v[2][4], int32_t m[2][4], uint8_t *E, uint32_t *mu_n, const uint8_t *Dcup, uint32_t Pcup, uint32_t pLSB)
 {
     for (int i = 0; i < 4; i++) {
         int32_t n = 4 * q + i;
@@ -461,12 +452,7 @@ static av_always_inline int jpeg2000_import_magref_bit(StateVars *stream, const 
 
 /* Signal EMB decode */
 static int
-jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state,
-                        StateVars *mel_stream, StateVars *vlc_stream,
-                        const uint16_t *vlc_table, const uint8_t *Dcup,
-                        uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k,
-                        uint8_t *emb_pat_1, uint8_t pos, uint16_t context,
-                        uint32_t Lcup, uint32_t Pcup)
+jpeg2000_decode_sig_emb(Jpeg2000DecoderContext *s, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, const uint16_t *vlc_table, const uint8_t *Dcup, uint8_t *sig_pat, uint8_t *res_off, uint8_t *emb_pat_k, uint8_t *emb_pat_1, uint8_t pos, uint16_t context, uint32_t Lcup, uint32_t Pcup)
 {
     if (context == 0) {
         uint8_t sym;
@@ -494,11 +480,7 @@ static av_always_inline void jpeg2000_modify_state(int x1, int x2, int width, in
 }
 
 static int jpeg2000_decode_ht_cleanup(
-    Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Jpeg2000T1Context *t1,
-    MelDecoderState *mel_state,StateVars *mel_stream, StateVars *vlc_stream,
-    StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup,
-    uint32_t Pcup, uint8_t pLSB, int width, int height,
-    int32_t *sample_buf, uint8_t *block_states)
+    Jpeg2000DecoderContext *s, Jpeg2000Cblk *cblk, Jpeg2000T1Context *t1, MelDecoderState *mel_state, StateVars *mel_stream, StateVars *vlc_stream, StateVars *mag_sgn_stream, const uint8_t *Dcup, uint32_t Lcup, uint32_t Pcup, uint8_t pLSB, int width, int height, int32_t *sample_buf, uint8_t *block_states)
 {
     uint16_t q = 0; // Represents current quad position.
     uint16_t q1, q2;
@@ -994,10 +976,7 @@ static void jpeg2000_calc_mbr(uint8_t *mbr, const uint16_t i, const uint16_t j, 
 
     *mbr |= local_mbr;
 }
-static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s, int width, int height,
-                                           int stride, int pLSB, int32_t *sample_buf,
-                                           uint8_t *block_states, uint8_t *magref_segment,
-                                           uint32_t magref_length)
+static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s, int width, int height, int stride, int pLSB, int32_t *sample_buf, uint8_t *block_states, uint8_t *magref_segment, uint32_t magref_length)
 {
     int32_t *sp;
     uint8_t causal_cond = 0;
@@ -1033,9 +1012,7 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
     }
 }
 
-static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height,
-                                    uint8_t *magref_segment, uint32_t magref_length,
-                                    uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
+static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
 {
     // Described in clause 7.4
     // procedure: decodeSigPropMag
@@ -1054,37 +1031,27 @@ static void jpeg2000_decode_sigprop(Jpeg2000Cblk *cblk, uint16_t width, uint16_t
     for (int n1 = 0; n1 < num_v_stripe; n1++) {
         j = 0;
         for (int n2 = 0; n2 < num_h_stripe; n2++) {
-            jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height,
-                                           stride, pLSB, sample_buf, block_states,
-                                           magref_segment, magref_length);
+            jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
             j += 4;
         }
         last_width = width % 4;
         if (last_width)
-            jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height,
-                                           stride, pLSB, sample_buf, block_states,
-                                           magref_segment, magref_length);
+            jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
         i += 4;
     }
     // decode remaining height stripes
     b_height = height % 4;
     j = 0;
     for (int n2 = 0; n2 < num_h_stripe; n2++) {
-        jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height,
-                                       stride, pLSB, sample_buf, block_states,
-                                       magref_segment, magref_length);
+        jpeg2000_process_stripes_block(&sp_dec, i, j, b_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
         j += 4;
     }
     last_width = width % 4;
     if (last_width)
-        jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height,
-                                       stride, pLSB, sample_buf, block_states,
-                                       magref_segment, magref_length);
+        jpeg2000_process_stripes_block(&sp_dec, i, j, last_width, b_height, stride, pLSB, sample_buf, block_states, magref_segment, magref_length);
 }
 
-static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t block_height,
-                                  uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB,
-                                  int32_t *sample_buf, uint8_t *block_states)
+static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t block_height, uint8_t *magref_segment, uint32_t magref_length, uint8_t pLSB, int32_t *sample_buf, uint8_t *block_states)
 {
     // Described in clause 7.5
     // procedure: decodeSigPropMag
@@ -1124,9 +1091,7 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
     return 1;
 }
 
-int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty,
-                 Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width,
-                 int height, int magp, uint8_t roi_shift)
+int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int magp, uint8_t roi_shift)
 {
     uint8_t p0 = 0;     // Number of placeholder passes.
     uint32_t Lcup;      // Length of HT cleanup segment.
@@ -1231,9 +1196,7 @@ int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty,
         ret = AVERROR(ENOMEM);
         goto free;
     }
-    if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc,
-                                          &mag_sgn, Dcup, Lcup, Pcup, pLSB,
-                                          width, height, sample_buf, block_states)) < 0)
+    if ((ret = jpeg2000_decode_ht_cleanup(s, cblk, t1, &mel_state, &mel, &vlc, &mag_sgn, Dcup, Lcup, Pcup, pLSB, width, height, sample_buf, block_states)) < 0)
         goto free;
 
     if (cblk->npasses > 1)
