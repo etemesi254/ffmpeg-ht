@@ -300,26 +300,18 @@ vlc_decode_u_prefix(StateVars *vlc_stream, const uint8_t *refill_array)
 {
     // clause 7.3.6
     // procedure : decodeUPrefix.
+    static uint8_t return_value[8] = {5, 1, 2, 1, 3, 1, 2, 1};
+    static uint8_t drop_bits[8]    = {3, 1, 2, 1, 3, 1, 2, 1};
 
     uint8_t bits;
+
     if (vlc_stream->bits_left < 3)
         jpeg2000_bitbuf_refill_backwards(vlc_stream, refill_array);
 
     bits = jpeg2000_bitbuf_peek_bits_lsb(vlc_stream, 3);
 
-    if (bits & 0b1) {
-        jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 1);
-        return 1;
-    }
-    if (bits & 0b10) {
-        jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 2);
-        return 2;
-    }
-    jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, 3);
-
-    if (bits & 0b100)
-        return 3;
-    return 5;
+    jpeg2000_bitbuf_drop_bits_lsb(vlc_stream, drop_bits[bits]);
+    return return_value[bits];
 }
 /**
  * @brief Decode variable length u-vlc suffix
@@ -804,7 +796,7 @@ static int jpeg2000_decode_ht_cleanup(
             E_nw[J2K_Q1] = (!is_divisible(q1, c)) * E[4 * (q1 - quad_width) - 1];
             E_nw[J2K_Q2] = (!is_divisible(q2, c)) * E[4 * (q2 - quad_width) - 1];
 
-            E_nf[J2K_Q1] = (!is_divisible(q1 + 1, c)) *E[4 * (q1 - quad_width) + 5];
+            E_nf[J2K_Q1] = (!is_divisible(q1 + 1, c)) * E[4 * (q1 - quad_width) + 5];
             E_nf[J2K_Q2] = (!is_divisible(q2 + 1, c)) * E[4 * (q2 - quad_width) + 5];
 
             max_e[J2K_Q1] = FFMAX(E_nw[J2K_Q1], FFMAX3(E_n[J2K_Q1], E_ne[J2K_Q1], E_nf[J2K_Q1]));
