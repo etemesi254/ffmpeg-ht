@@ -1987,6 +1987,7 @@ static inline void tile_codeblocks(Jpeg2000DecoderContext *s, Jpeg2000DecTile *t
                             dequantization_int(x, y, cblk, comp, &t1, band);
                    } /* end cblk */
                 } /*end prec */
+                subbandno+=1;
             } /* end band */
         } /* end reslevel */
 
