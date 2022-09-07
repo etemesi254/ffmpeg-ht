@@ -161,8 +161,8 @@ static int jpeg2000_bitbuf_refill_backwards(StateVars *buffer,
  * in the stream while skipping over stuffed bits.
  */
 static void jpeg2000_bitbuf_refill_forward(StateVars *buffer,
-                                            const uint8_t *array,
-                                            uint32_t length)
+                                           const uint8_t *array,
+                                           uint32_t length)
 {
     while (buffer->bits_left < 32) {
         buffer->tmp = 0xFF;
@@ -363,7 +363,7 @@ static av_always_inline uint8_t vlc_decode_u_extension(
 
 /**
  * Magnitude and Sign decode procedures
-*/
+ */
 
 static int32_t jpeg2000_decode_mag_sgn(StateVars *mag_sgn_stream, int32_t m_n, int32_t i_n, const uint8_t *buf, uint32_t length)
 {
@@ -801,15 +801,11 @@ static int jpeg2000_decode_ht_cleanup(
             E_nf[J2K_Q1] = 0;
             E_nf[J2K_Q2] = 0;
 
-            if (!is_divisible(q1, c))
-                E_nw[J2K_Q1] = E[4 * (q1 - quad_width) - 1];
-            if (!is_divisible(q2, c))
-                E_nw[J2K_Q2] = E[4 * (q2 - quad_width) - 1];
+            E_nw[J2K_Q1] = (!is_divisible(q1, c)) * E[4 * (q1 - quad_width) - 1];
+            E_nw[J2K_Q2] = (!is_divisible(q2, c)) * E[4 * (q2 - quad_width) - 1];
 
-            if (!is_divisible(q1 + 1, c))
-                E_nf[J2K_Q1] = E[4 * (q1 - quad_width) + 5];
-            if (!is_divisible(q2 + 1, c))
-                E_nf[J2K_Q2] = E[4 * (q2 - quad_width) + 5];
+            E_nf[J2K_Q1] = (!is_divisible(q1 + 1, c)) *E[4 * (q1 - quad_width) + 5];
+            E_nf[J2K_Q2] = (!is_divisible(q2 + 1, c)) * E[4 * (q2 - quad_width) + 5];
 
             max_e[J2K_Q1] = FFMAX(E_nw[J2K_Q1], FFMAX3(E_n[J2K_Q1], E_ne[J2K_Q1], E_nf[J2K_Q1]));
             max_e[J2K_Q2] = FFMAX(E_nw[J2K_Q2], FFMAX3(E_n[J2K_Q2], E_ne[J2K_Q2], E_nf[J2K_Q2]));
@@ -878,15 +874,9 @@ static int jpeg2000_decode_ht_cleanup(
 
             E_ne[J2K_Q1] = E[4 * (q1 - quad_width) + 3];
 
-            E_nw[J2K_Q1] = 0;
+            E_nw[J2K_Q1] = (!is_divisible(q1, c)) * E[4 * (q1 - quad_width) - 1];
 
-            E_nf[J2K_Q1] = 0;
-
-            if (!is_divisible(q1, c))
-                E_nw[J2K_Q1] = E[4 * (q1 - quad_width) - 1];
-
-            if (!is_divisible(q1 + 1, c))
-                E_nf[J2K_Q1] = E[4 * (q1 - quad_width) + 5];
+            E_nf[J2K_Q1] = (!is_divisible(q1 + 1, c)) * E[4 * (q1 - quad_width) + 5];
 
             max_e[J2K_Q1] = FFMAX(E_nw[J2K_Q1], FFMAX3(E_n[J2K_Q1], E_ne[J2K_Q1], E_nf[J2K_Q1]));
 
@@ -1007,7 +997,6 @@ static void jpeg2000_process_stripes_block(StateVars *sig_prop, int i_s, int j_s
             sp = &sample_buf[j + (i * (stride - 2))];
             if ((*sp & (1 << pLSB)) != 0)
                 *sp = (*sp & 0x7FFFFFFF) | (jpeg2000_import_bit(sig_prop, magref_segment, magref_length) << 31);
-
         }
     }
 }
@@ -1093,19 +1082,19 @@ static int jpeg2000_decode_magref(Jpeg2000Cblk *cblk, uint16_t width, uint16_t b
 
 int decode_htj2k(Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *codsty, Jpeg2000T1Context *t1, Jpeg2000Cblk *cblk, int width, int height, int magp, uint8_t roi_shift)
 {
-    uint8_t p0 = 0;     // Number of placeholder passes.
-    uint32_t Lcup;      // Length of HT cleanup segment.
-    uint32_t Lref;      // Length of Refinement segment.
-    uint32_t Scup;      // HT cleanup segment suffix length.
-    uint32_t Pcup;      // HT cleanup segment prefix length.
+    uint8_t p0 = 0; // Number of placeholder passes.
+    uint32_t Lcup;  // Length of HT cleanup segment.
+    uint32_t Lref;  // Length of Refinement segment.
+    uint32_t Scup;  // HT cleanup segment suffix length.
+    uint32_t Pcup;  // HT cleanup segment prefix length.
 
-    uint8_t S_blk;      // Number of skipped magnitude bitplanes;
+    uint8_t S_blk; // Number of skipped magnitude bitplanes;
     uint8_t pLSB;
 
-    uint8_t *Dcup;      // Byte of an HT cleanup segment.
-    uint8_t *Dref;      // Byte of an HT refinement segment.
+    uint8_t *Dcup; // Byte of an HT cleanup segment.
+    uint8_t *Dref; // Byte of an HT refinement segment.
 
-    int z_blk;          // Number of ht coding pass
+    int z_blk; // Number of ht coding pass
 
     uint8_t empty_passes;
 
